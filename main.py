@@ -1,9 +1,11 @@
 import os
 import asyncio
 import logging
+import google.generativeai as genai  # <--- ВОТ ЭТА СТРОКА БЫЛА ПРОПУЩЕНА
 from flask import Flask, request, Response
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from waitress import serve
 
 # 1. КОНФИГУРАЦИЯ И НАСТРОЙКА
 logging.basicConfig(
@@ -34,18 +36,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text('Здравствуйте! Я ваш юридический AI-ассистент. Задайте мне вопрос.')
 
 def get_ai_response(question: str) -> str:
-    # ... (эта функция остается без изменений)
     system_prompt = (
-        "Твоя роль — первоклассный юридический помощник..." # и так далее
+        "Твоя роль — первоклассный юридический помощник. Твое имя — Вячеслав. "
+        "Твоя задача — кратко и в общих чертах разъяснять сложные юридические вопросы, донося только самую важную суть."
+        "**СТРОГИЕ ПРАВИЛА:**"
+        "1. **Краткость:** Твой ответ должен быть сжатым, в идеале 2-3 абзаца. Не углубляйся в детали без необходимости."
+        "2. **Никогда не представляйся**, если тебя не спросили напрямую 'Как тебя зовут?'. Сразу переходи к сути ответа."
+        "3. **Никогда не упоминай** слова 'контекст' или 'предоставленная информация'. Отвечай так, будто эта информация — твои собственные знания."
+        "4. **Для форматирования** используй теги HTML: <b>...</b> для жирного, <i>...</i> для курсива. Для создания абзаца используй ОДНУ пустую строку."
     )
-    full_prompt = f"{system_prompt}\n\n...{KNOWLEDGE_BASE}\n\n...{question}"
+    full_prompt = f"{system_prompt}\n\nВот база знаний для твоего ответа:\n{KNOWLEDGE_BASE}\n\nВопрос клиента: {question}"
     try:
         model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(full_prompt)
         return response.text
     except Exception as e:
         logger.error(f"Ошибка при обращении к Google AI: {e}")
-        return "К сожалению, произошла ошибка..."
+        return "К сожалению, произошла ошибка при обращении к AI-сервису. Попробуйте позже."
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_question = update.message.text
@@ -61,16 +68,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.error(f"Ошибка форматирования HTML: {e}")
         await update.message.reply_text(cleaned_answer)
 
-
 # 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК ВЕБ-СЕРВЕРА
 if __name__ == "__main__":
     ptb_app = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # Регистрируем обработчики
     ptb_app.add_handler(CommandHandler("start", start))
     ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Создаем веб-сервер Flask
     flask_app = Flask(__name__)
 
     @flask_app.route('/')
@@ -84,7 +88,5 @@ if __name__ == "__main__":
         await ptb_app.process_update(update)
         return Response(status=200)
 
-    # Запускаем веб-сервер
-    from waitress import serve
     logger.info(f"Запуск сервера на порту {PORT}...")
     serve(flask_app, host='0.0.0.0', port=PORT)
