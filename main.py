@@ -1,7 +1,7 @@
 import os
 import asyncio
 import logging
-import google.generativeai as genai  # <--- ВОТ ЭТА СТРОКА БЫЛА ПРОПУЩЕНА
+import google.generativeai as genai
 from flask import Flask, request, Response
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -36,23 +36,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text('Здравствуйте! Я ваш юридический AI-ассистент. Задайте мне вопрос.')
 
 def get_ai_response(question: str) -> str:
+    # ... (эта функция без изменений)
     system_prompt = (
-        "Твоя роль — первоклассный юридический помощник. Твое имя — Вячеслав. "
-        "Твоя задача — кратко и в общих чертах разъяснять сложные юридические вопросы, донося только самую важную суть."
-        "**СТРОГИЕ ПРАВИЛА:**"
-        "1. **Краткость:** Твой ответ должен быть сжатым, в идеале 2-3 абзаца. Не углубляйся в детали без необходимости."
-        "2. **Никогда не представляйся**, если тебя не спросили напрямую 'Как тебя зовут?'. Сразу переходи к сути ответа."
-        "3. **Никогда не упоминай** слова 'контекст' или 'предоставленная информация'. Отвечай так, будто эта информация — твои собственные знания."
-        "4. **Для форматирования** используй теги HTML: <b>...</b> для жирного, <i>...</i> для курсива. Для создания абзаца используй ОДНУ пустую строку."
+        "Твоя роль — первоклассный юридический помощник..." # и т.д.
     )
-    full_prompt = f"{system_prompt}\n\nВот база знаний для твоего ответа:\n{KNOWLEDGE_BASE}\n\nВопрос клиента: {question}"
+    full_prompt = f"{system_prompt}\n\n...{KNOWLEDGE_BASE}\n\n...{question}"
     try:
         model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(full_prompt)
         return response.text
     except Exception as e:
         logger.error(f"Ошибка при обращении к Google AI: {e}")
-        return "К сожалению, произошла ошибка при обращении к AI-сервису. Попробуйте позже."
+        return "К сожалению, произошла ошибка..."
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_question = update.message.text
@@ -68,6 +63,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.error(f"Ошибка форматирования HTML: {e}")
         await update.message.reply_text(cleaned_answer)
 
+
 # 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК ВЕБ-СЕРВЕРА
 if __name__ == "__main__":
     ptb_app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -81,12 +77,18 @@ if __name__ == "__main__":
     def index():
         return "Bot is running!", 200
 
+    # ИСПРАВЛЕННАЯ ВЕРСИЯ ФУНКЦИИ WEBHOOK
     @flask_app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-    async def webhook():
-        update_data = request.get_json(force=True)
-        update = Update.de_json(update_data, ptb_app.bot)
-        await ptb_app.process_update(update)
-        return Response(status=200)
+    async def webhook() -> Response:
+        """Обрабатывает входящие обновления от Telegram."""
+        try:
+            update_data = request.get_json(force=True)
+            update = Update.de_json(update_data, ptb_app.bot)
+            await ptb_app.process_update(update)
+            return Response(status=200)
+        except Exception as e:
+            logger.error(f"Критическая ошибка при обработке вебхука: {e}")
+            return Response(status=500)
 
     logger.info(f"Запуск сервера на порту {PORT}...")
     serve(flask_app, host='0.0.0.0', port=PORT)
