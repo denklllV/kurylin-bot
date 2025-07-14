@@ -2,10 +2,8 @@ import os
 import asyncio
 import logging
 import google.generativeai as genai
-from flask import Flask, request, Response
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from waitress import serve
 
 # 1. КОНФИГУРАЦИЯ И НАСТРОЙКА
 logging.basicConfig(
@@ -16,10 +14,16 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+# Render предоставит порт, на котором нужно запуститься
 PORT = int(os.environ.get('PORT', 8443))
+# Render предоставит URL нашего сервиса
+WEBHOOK_URL = f"https://{os.getenv('RENDER_SERVICE_NAME')}.onrender.com/{TELEGRAM_TOKEN}"
 
+# Настраиваем AI
 genai.configure(api_key=GOOGLE_API_KEY)
 MODEL_NAME = "gemini-1.5-flash-latest"
+
+# Загружаем базу знаний
 KNOWLEDGE_BASE = ""
 try:
     with open('bankruptcy_law.md', 'r', encoding='utf-8') as f:
@@ -36,18 +40,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text('Здравствуйте! Я ваш юридический AI-ассистент. Задайте мне вопрос.')
 
 def get_ai_response(question: str) -> str:
-    # ... (эта функция без изменений)
+    # ПОЛНАЯ ВЕРСИЯ ВАШЕГО ПРОМПТА
     system_prompt = (
-        "Твоя роль — первоклассный юридический помощник..." # и т.д.
+        "Твоя роль — первоклассный юридический помощник. Твое имя — Вячеслав. "
+        "Твоя речь — человечная, мягкая и эмпатичная. "
+        "Твоя задача — кратко и в общих чертах разъяснять сложные юридические вопросы, донося только самую важную суть."
+        "**СТРОГИЕ ПРАВИЛА:**"
+        "1. **Краткость:** Твой ответ должен быть сжатым, в идеале 2-3 абзаца. Не углубляйся в детали без необходимости."
+        "2. **Никогда не представляйся**, если тебя не спросили напрямую 'Как тебя зовут?'. Сразу переходи к сути ответа."
+        "3. **Никогда не упоминай** слова 'контекст' или 'предоставленная информация'. Отвечай так, будто эта информация — твои собственные знания."
+        "4. **Для форматирования** используй теги HTML: <b>...</b> для жирного, <i>...</i> для курсива. Для создания абзаца используй ОДНУ пустую строку."
     )
-    full_prompt = f"{system_prompt}\n\n...{KNOWLEDGE_BASE}\n\n...{question}"
+    full_prompt = f"{system_prompt}\n\nВот база знаний для твоего ответа:\n{KNOWLEDGE_BASE}\n\nВопрос клиента: {question}"
     try:
         model = genai.GenerativeModel(MODEL_NAME)
         response = model.generate_content(full_prompt)
         return response.text
     except Exception as e:
         logger.error(f"Ошибка при обращении к Google AI: {e}")
-        return "К сожалению, произошла ошибка..."
+        return "К сожалению, произошла ошибка при обращении к AI-сервису. Попробуйте позже."
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_question = update.message.text
@@ -63,32 +74,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.error(f"Ошибка форматирования HTML: {e}")
         await update.message.reply_text(cleaned_answer)
 
+# 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК В РЕЖИМЕ ВЕБХУКА
+def main() -> None:
+    """Запускает бота в режиме вебхука."""
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК ВЕБ-СЕРВЕРА
+    # Регистрируем обработчики
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Запускаем бота, но не через polling, а через встроенный веб-сервер
+    logger.info(f"Запуск бота на порту {PORT}. Вебхук будет установлен на {WEBHOOK_URL}")
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TELEGRAM_TOKEN,
+        webhook_url=WEBHOOK_URL
+    )
+
 if __name__ == "__main__":
-    ptb_app = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    ptb_app.add_handler(CommandHandler("start", start))
-    ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    flask_app = Flask(__name__)
-
-    @flask_app.route('/')
-    def index():
-        return "Bot is running!", 200
-
-    # ИСПРАВЛЕННАЯ ВЕРСИЯ ФУНКЦИИ WEBHOOK
-    @flask_app.route(f'/{TELEGRAM_TOKEN}', methods=['POST'])
-    async def webhook() -> Response:
-        """Обрабатывает входящие обновления от Telegram."""
-        try:
-            update_data = request.get_json(force=True)
-            update = Update.de_json(update_data, ptb_app.bot)
-            await ptb_app.process_update(update)
-            return Response(status=200)
-        except Exception as e:
-            logger.error(f"Критическая ошибка при обработке вебхука: {e}")
-            return Response(status=500)
-
-    logger.info(f"Запуск сервера на порту {PORT}...")
-    serve(flask_app, host='0.0.0.0', port=PORT)
+    main()
