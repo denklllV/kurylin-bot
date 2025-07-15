@@ -2,8 +2,8 @@ import os
 import asyncio
 import logging
 from openai import OpenAI
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
 # 1. КОНФИГУРАЦИЯ И НАСТРОЙКА
 logging.basicConfig(
@@ -37,43 +37,24 @@ try:
 except FileNotFoundError:
     logger.warning("Внимание: Файлы с базой знаний не найдены.")
 
-# 2. НОВЫЕ И ОБНОВЛЕННЫЕ ФУНКЦИИ
-def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> str:
-    """
-    Находит самые релевантные части из базы знаний по вопросу пользователя.
-    Это самый простой способ реализовать Retrieval-Augmented Generation (RAG).
-    """
-    # Разбиваем базу знаний на "чанки" (абзацы)
-    chunks = knowledge_base.split('\n\n')
-    # Упрощаем вопрос до набора ключевых слов
-    question_keywords = set(question.lower().split())
+# 2. ФУНКЦИИ-ОБРАБОТЧИКИ БОТА
 
-    # Оцениваем каждый чанк по количеству совпадений ключевых слов
+def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> str:
+    chunks = knowledge_base.split('\n\n')
+    question_keywords = set(question.lower().split())
     scored_chunks = []
     for chunk in chunks:
         chunk_words = set(chunk.lower().split())
         score = len(question_keywords.intersection(chunk_words))
         if score > 0:
             scored_chunks.append((score, chunk))
-    
-    # Сортируем чанки по релевантности (от большей к меньшей)
     scored_chunks.sort(reverse=True, key=lambda x: x[0])
-    
-    # Выбираем лучшие N чанков
     top_chunks = [chunk for score, chunk in scored_chunks[:max_chunks]]
-    
     logger.info(f"Найдено {len(top_chunks)} релевантных чанков для вопроса.")
-    
-    # Соединяем лучшие чанки в единый контекст
     return "\n\n".join(top_chunks)
 
 def get_ai_response(question: str) -> str:
-    """
-    Формирует промпт с динамическим контекстом и получает ответ от модели.
-    """
-    # ШАГ 1: Найти релевантную информацию в базе знаний
     dynamic_context = find_relevant_chunks(question, KNOWLEDGE_BASE)
-
     system_prompt = (
         "Твоя роль — первоклассный юридический помощник. Твое имя — Вячеслав. "
         "Твоя речь — человечная, мягкая и эмпатичная. "
@@ -85,10 +66,7 @@ def get_ai_response(question: str) -> str:
         "3. **Никогда не упоминай** слова 'контекст' или 'база знаний'. Отвечай так, будто эта информация — твои собственные знания."
         "4. **Для форматирования** используй теги HTML: <b>...</b> для жирного, <i>...</i> для курсива. Для создания абзаца используй ОДНУ пустую строку."
     )
-    
-    # ШАГ 2: Сформировать компактный промпт с найденной информацией
     user_prompt = f"База знаний:\n{dynamic_context}\n\nВопрос клиента: {question}"
-
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
@@ -103,33 +81,65 @@ def get_ai_response(question: str) -> str:
         return "К сожалению, произошла ошибка при обрашении к AI-сервису. Попробуйте позже."
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отправляет приветственное сообщение при команде /start."""
-    await update.message.reply_text('Здравствуйте! Я ваш юридический AI-ассистент. Задайте мне вопрос.')
+    """Отправляет приветственное сообщение и предлагает меню."""
+    await update.message.reply_text('Здравствуйте! Я ваш юридический AI-ассистент. Вы можете задать мне вопрос или воспользоваться главным меню, вызвав команду /menu.')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обрабатывает текстовые сообщения от пользователя."""
     user_question = update.message.text
     await update.message.reply_text("Ищу ответ в базе знаний...")
-    
     loop = asyncio.get_running_loop()
     ai_answer = await loop.run_in_executor(None, get_ai_response, user_question)
-    
     cleaned_answer = ai_answer.replace('<p>', '').replace('</p>', '')
     while '\n\n\n' in cleaned_answer:
         cleaned_answer = cleaned_answer.replace('\n\n\n', '\n\n')
-        
     try:
         await update.message.reply_text(cleaned_answer, parse_mode='HTML')
     except Exception as e:
         logger.error(f"Ошибка форматирования HTML: {e}. Отправка без форматирования.")
         await update.message.reply_text(cleaned_answer)
 
-# 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК В РЕЖИМЕ ВЕБХУКА
+# --- НОВЫЕ ФУНКЦИИ ДЛЯ МЕНЮ ---
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отправляет сообщение с инлайн-кнопками главного меню."""
+    keyboard = [
+        [InlineKeyboardButton("❓ Задать вопрос", callback_data='ask_question')],
+        [InlineKeyboardButton("📝 Заполнить анкету", callback_data='fill_form')],
+        [InlineKeyboardButton("🧑‍💼 Связаться с человеком", callback_data='contact_human')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text('Пожалуйста, выберите один из следующих вариантов:', reply_markup=reply_markup)
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обрабатывает нажатия на инлайн-кнопки."""
+    query = update.callback_query
+    # Обязательно отвечаем на колбэк, чтобы кнопка перестала "грузиться"
+    await query.answer()
+
+    # В query.data хранится та строка, которую мы указали в callback_data
+    if query.data == 'ask_question':
+        await query.edit_message_text(text="Вы можете просто написать свой вопрос прямо в этот чат. Я готов помочь.")
+    elif query.data == 'fill_form':
+        await query.edit_message_text(text="Вы выбрали 'Заполнить анкету'. Этот функционал находится в разработке.")
+    elif query.data == 'contact_human':
+        await query.edit_message_text(text="Вы выбрали 'Связаться с человеком'. Этот функционал находится в разработке.")
+    else:
+        await query.edit_message_text(text=f"Произошла ошибка. Выбран неизвестный вариант: {query.data}")
+
+
+# 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК И РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ
 def main() -> None:
     """Запускает бота в режиме вебхука."""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
+    # Регистрируем обработчики команд
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", menu)) # <-- НАШ НОВЫЙ ОБРАБОТЧИК МЕНЮ
+
+    # Регистрируем обработчик нажатий на кнопки
+    application.add_handler(CallbackQueryHandler(button_handler)) # <-- НАШ НОВЫЙ ОБРАБОТЧИК КНОПОК
+
+    # Регистрируем обработчик текстовых сообщений (должен идти после кнопок)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info(f"Запуск бота на порту {PORT}. Вебхук будет установлен на {WEBHOOK_URL}")
@@ -142,3 +152,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+        
+   
