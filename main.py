@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 from openai import OpenAI
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -13,28 +13,18 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-# 1. КОНФИГУРАЦИЯ И НАСТРОЙКА
+# 1. КОНФИГУРАЦИЯ И НАСТРОЙКА (без изменений)
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# --- Настройки окружения ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-# ... (остальные настройки без изменений)
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 PORT = int(os.environ.get('PORT', 8443))
 WEBHOOK_URL = f"https://{os.getenv('RENDER_SERVICE_NAME')}.onrender.com/{TELEGRAM_TOKEN}"
-
-# --- Настройка AI-клиента ---
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-)
+client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
 MODEL_NAME = "mistralai/mistral-7b-instruct:free"
-
-# --- Загрузка базы знаний ---
 KNOWLEDGE_BASE = ""
 try:
     with open('bankruptcy_law.md', 'r', encoding='utf-8') as f:
@@ -47,7 +37,6 @@ except FileNotFoundError:
     logger.warning("Внимание: Файлы с базой знаний не найдены.")
 
 # --- Состояния для ConversationHandler ---
-# Мы определяем константы для каждого шага, чтобы не ошибиться в строках.
 AGREEMENT, GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(5)
 
 # 2. ФУНКЦИИ-ОБРАБОТЧИКИ БОТА
@@ -62,37 +51,22 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("🧑‍💼 Связаться с человеком", callback_data='contact_human')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    # Убираем клавиатуру отмены, если она осталась после сбоя
     await update.message.reply_text('Пожалуйста, выберите один из следующих вариантов:', reply_markup=reply_markup)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Эта функция теперь отвечает только за консультации AI
-    user_question = update.message.text
-    await update.message.reply_text("Думаю над вашим вопросом...")
-    # ... (логика AI без изменений)
-    loop = asyncio.get_running_loop()
-    ai_answer = await loop.run_in_executor(None, get_ai_response, user_question)
-    cleaned_answer = ai_answer.replace('<p>', '').replace('</p>', '')
-    while '\n\n\n' in cleaned_answer:
-        cleaned_answer = cleaned_answer.replace('\n\n\n', '\n\n')
-    try:
-        await update.message.reply_text(cleaned_answer, parse_mode='HTML')
-    except Exception as e:
-        logger.error(f"Ошибка форматирования HTML: {e}. Отправка без форматирования.")
-        await update.message.reply_text(cleaned_answer)
+# --- ЛОГИКА АНКЕТИРОВАНИЯ (ИЗМЕНЕНА) ---
 
-
-# --- ЛОГИКА АНКЕТИРОВАНИЯ (НОВЫЙ БЛОК) ---
+# Создаем клавиатуру отмены один раз, чтобы использовать ее везде
+cancel_keyboard = ReplyKeyboardMarkup([['Отмена']], one_time_keyboard=True, resize_keyboard=True)
 
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начинает сценарий анкетирования с запроса согласия."""
     query = update.callback_query
     await query.answer()
-    
     keyboard = [
         [InlineKeyboardButton("✅ Согласен", callback_data='agree'), InlineKeyboardButton("❌ Нет", callback_data='disagree')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await query.edit_message_text(
         text="Для начала нам нужно ваше согласие на обработку персональных данных. Это стандартная процедура.",
         reply_markup=reply_markup
@@ -100,40 +74,35 @@ async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return AGREEMENT
 
 async def ask_for_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Запрашивает имя пользователя."""
+    """Запрашивает имя пользователя, добавляя кнопку отмены."""
     query = update.callback_query
-    if query: # Если пришли с кнопки
-        await query.answer()
-        await query.edit_message_text(text="Отлично! Как я могу к вам обращаться?")
-    else: # Если пришли после команды /start или /menu
-         await update.message.reply_text(text="Отлично! Как я могу к вам обращаться?")
-
+    await query.answer()
+    await query.edit_message_text(text="Отлично! Как я могу к вам обращаться?")
+    # Отправляем отдельное сообщение, чтобы показать ReplyKeyboard
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Введите ваше имя:", reply_markup=cancel_keyboard)
     return GET_NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Сохраняет имя и запрашивает сумму долга."""
-    user_name = update.message.text
-    context.user_data['name'] = user_name
-    await update.message.reply_text(f"Приятно познакомиться, {user_name}! Какая у вас общая сумма задолженности?")
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text(f"Приятно познакомиться! Какая у вас общая сумма задолженности?", reply_markup=cancel_keyboard)
     return GET_DEBT
 
 async def get_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Сохраняет сумму долга и запрашивает источник дохода."""
     context.user_data['debt'] = update.message.text
-    await update.message.reply_text("Понятно. Укажите, пожалуйста, ваш основной источник дохода (например, 'Работаю по ТК РФ', 'Пенсионер', 'Безработный').")
+    await update.message.reply_text("Понятно. Укажите, пожалуйста, ваш основной источник дохода (например, 'Работаю по ТК РФ', 'Пенсионер', 'Безработный').", reply_markup=cancel_keyboard)
     return GET_INCOME
 
 async def get_income(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Сохраняет источник дохода и запрашивает регион."""
     context.user_data['income'] = update.message.text
-    await update.message.reply_text("Спасибо. И последний вопрос: в каком регионе (область, край) вы прописаны?")
+    await update.message.reply_text("Спасибо. И последний вопрос: в каком регионе (область, край) вы прописаны?", reply_markup=cancel_keyboard)
     return GET_REGION
 
 async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Сохраняет регион, завершает анкету и показывает результат."""
     context.user_data['region'] = update.message.text
-    
-    # Формируем итоговое сообщение
     user_info = context.user_data
     summary = (
         f"<b>Спасибо за ваши ответы!</b>\n\n"
@@ -144,16 +113,14 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"- <b>Регион:</b> {user_info.get('region', 'не указано')}\n\n"
         f"Наши специалисты скоро свяжутся с вами. Вы можете продолжить задавать мне вопросы или вернуться в /menu."
     )
-    
-    await update.message.reply_text(summary, parse_mode='HTML')
-    # Очищаем временные данные
+    # Убираем кастомную клавиатуру и возвращаем стандартную
+    await update.message.reply_text(summary, parse_mode='HTML', reply_markup=ReplyKeyboardRemove())
     context.user_data.clear()
-    # Завершаем сценарий
     return ConversationHandler.END
 
-async def cancel_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Отменяет и завершает сценарий анкетирования."""
-    await update.message.reply_text("Заполнение анкеты отменено. Вы всегда можете начать заново, вызвав /menu.")
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Общая функция отмены для команды /cancel и кнопки 'Отмена'."""
+    await update.message.reply_text("Заполнение анкеты отменено. Вы всегда можете начать заново, вызвав /menu.", reply_markup=ReplyKeyboardRemove())
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -167,10 +134,8 @@ async def handle_disagreement(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК И РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ
 def main() -> None:
-    """Запускает бота и настраивает все обработчики."""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # --- Создаем обработчик сценария анкетирования ---
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_form, pattern='^start_form$')],
         states={
@@ -183,23 +148,23 @@ def main() -> None:
             GET_INCOME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_income)],
             GET_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_region)],
         },
-        fallbacks=[CommandHandler('cancel', cancel_form)],
+        # Мы добавляем обработку кнопки "Отмена" в каждый шаг, где ждем текст
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            MessageHandler(filters.Regex('^Отмена$'), cancel)
+        ],
     )
 
-    # Регистрируем обработчики в приложении
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
-    
-    # Сначала добавляем обработчик сценария
     application.add_handler(conv_handler)
+    
+    # Этот обработчик теперь не нужен, так как мы обрабатываем кнопки внутри conv_handler
+    # application.add_handler(CallbackQueryHandler(button_handler)) 
 
-    # Затем обработчик для остальных кнопок (если они появятся)
-    # application.add_handler(CallbackQueryHandler(button_handler)) # Пока он не нужен
-
-    # И только в конце - обработчик текстовых сообщений
+    # Обработчик текстовых сообщений для AI должен идти в конце
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # ... (код запуска вебхука без изменений)
     logger.info(f"Запуск бота на порту {PORT}.")
     application.run_webhook(
         listen="0.0.0.0",
@@ -208,9 +173,10 @@ def main() -> None:
         webhook_url=WEBHOOK_URL
     )
 
-# --- Вспомогательные функции (без изменений) ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (без изменений) ---
+# ... (оставляем функции find_relevant_chunks и get_ai_response без изменений)
+
 def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> str:
-    # ...
     chunks = knowledge_base.split('\n\n')
     question_keywords = set(question.lower().split())
     scored_chunks = []
@@ -224,7 +190,6 @@ def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> st
     return "\n\n".join(top_chunks)
 
 def get_ai_response(question: str) -> str:
-    # ...
     dynamic_context = find_relevant_chunks(question, KNOWLEDGE_BASE)
     system_prompt = (
         "Твоя роль — первоклассный юридический помощник. Твое имя — Вячеслав. "
@@ -250,6 +215,20 @@ def get_ai_response(question: str) -> str:
     except Exception as e:
         logger.error(f"Ошибка при обращении к OpenRouter AI: {e}")
         return "К сожалению, произошла ошибка при обрашении к AI-сервису. Попробуйте позже."
+        
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_question = update.message.text
+    await update.message.reply_text("Ищу ответ в базе знаний...")
+    loop = asyncio.get_running_loop()
+    ai_answer = await loop.run_in_executor(None, get_ai_response, user_question)
+    cleaned_answer = ai_answer.replace('<p>', '').replace('</p>', '')
+    while '\n\n\n' in cleaned_answer:
+        cleaned_answer = cleaned_answer.replace('\n\n\n', '\n\n')
+    try:
+        await update.message.reply_text(cleaned_answer, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Ошибка форматирования HTML: {e}. Отправка без форматирования.")
+        await update.message.reply_text(cleaned_answer)
 
 if __name__ == "__main__":
     main()
