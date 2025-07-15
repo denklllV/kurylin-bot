@@ -51,16 +51,13 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("🧑‍💼 Связаться с человеком", callback_data='contact_human')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    # Убираем клавиатуру отмены, если она осталась после сбоя
     await update.message.reply_text('Пожалуйста, выберите один из следующих вариантов:', reply_markup=reply_markup)
 
 # --- ЛОГИКА АНКЕТИРОВАНИЯ (ИЗМЕНЕНА) ---
 
-# Создаем клавиатуру отмены один раз, чтобы использовать ее везде
 cancel_keyboard = ReplyKeyboardMarkup([['Отмена']], one_time_keyboard=True, resize_keyboard=True)
 
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Начинает сценарий анкетирования с запроса согласия."""
     query = update.callback_query
     await query.answer()
     keyboard = [
@@ -74,34 +71,30 @@ async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return AGREEMENT
 
 async def ask_for_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Запрашивает имя пользователя, добавляя кнопку отмены."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text="Отлично! Как я могу к вам обращаться?")
-    # Отправляем отдельное сообщение, чтобы показать ReplyKeyboard
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Введите ваше имя:", reply_markup=cancel_keyboard)
+    # Удаляем инлайн-кнопки согласия
+    await query.edit_message_text(text="Отлично! Приступаем к заполнению анкеты.")
+    # Отправляем новый вопрос с клавиатурой отмены
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Как я могу к вам обращаться?", reply_markup=cancel_keyboard)
     return GET_NAME
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Сохраняет имя и запрашивает сумму долга."""
     context.user_data['name'] = update.message.text
     await update.message.reply_text(f"Приятно познакомиться! Какая у вас общая сумма задолженности?", reply_markup=cancel_keyboard)
     return GET_DEBT
 
 async def get_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Сохраняет сумму долга и запрашивает источник дохода."""
     context.user_data['debt'] = update.message.text
     await update.message.reply_text("Понятно. Укажите, пожалуйста, ваш основной источник дохода (например, 'Работаю по ТК РФ', 'Пенсионер', 'Безработный').", reply_markup=cancel_keyboard)
     return GET_INCOME
 
 async def get_income(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Сохраняет источник дохода и запрашивает регион."""
     context.user_data['income'] = update.message.text
     await update.message.reply_text("Спасибо. И последний вопрос: в каком регионе (область, край) вы прописаны?", reply_markup=cancel_keyboard)
     return GET_REGION
 
 async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Сохраняет регион, завершает анкету и показывает результат."""
     context.user_data['region'] = update.message.text
     user_info = context.user_data
     summary = (
@@ -113,28 +106,42 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"- <b>Регион:</b> {user_info.get('region', 'не указано')}\n\n"
         f"Наши специалисты скоро свяжутся с вами. Вы можете продолжить задавать мне вопросы или вернуться в /menu."
     )
-    # Убираем кастомную клавиатуру и возвращаем стандартную
     await update.message.reply_text(summary, parse_mode='HTML', reply_markup=ReplyKeyboardRemove())
     context.user_data.clear()
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Общая функция отмены для команды /cancel и кнопки 'Отмена'."""
     await update.message.reply_text("Заполнение анкеты отменено. Вы всегда можете начать заново, вызвав /menu.", reply_markup=ReplyKeyboardRemove())
     context.user_data.clear()
     return ConversationHandler.END
 
 async def handle_disagreement(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обрабатывает отказ от согласия на обработку данных."""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(text="К сожалению, без вашего согласия мы не можем продолжить. Если передумаете, вы всегда можете вернуться в /menu.")
     return ConversationHandler.END
 
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_question = update.message.text
+    await update.message.reply_text("Ищу ответ в базе знаний...")
+    loop = asyncio.get_running_loop()
+    ai_answer = await loop.run_in_executor(None, get_ai_response, user_question)
+    cleaned_answer = ai_answer.replace('<p>', '').replace('</p>', '')
+    while '\n\n\n' in cleaned_answer:
+        cleaned_answer = cleaned_answer.replace('\n\n\n', '\n\n')
+    try:
+        await update.message.reply_text(cleaned_answer, parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Ошибка форматирования HTML: {e}. Отправка без форматирования.")
+        await update.message.reply_text(cleaned_answer)
 
 # 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК И РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ
 def main() -> None:
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # --- Создаем обработчик сценария анкетирования ---
+    # ФИЛЬТР ДЛЯ ОБРАБОТКИ ТЕКСТА В СЦЕНАРИИ, ИГНОРИРУЮЩИЙ КНОПКУ "Отмена"
+    text_filter = filters.TEXT & ~filters.COMMAND & ~filters.Regex('^Отмена$')
 
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(start_form, pattern='^start_form$')],
@@ -143,14 +150,15 @@ def main() -> None:
                 CallbackQueryHandler(ask_for_name, pattern='^agree$'),
                 CallbackQueryHandler(handle_disagreement, pattern='^disagree$')
             ],
-            GET_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_name)],
-            GET_DEBT: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_debt)],
-            GET_INCOME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_income)],
-            GET_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_region)],
+            # Теперь мы используем наш новый, более умный фильтр
+            GET_NAME: [MessageHandler(text_filter, get_name)],
+            GET_DEBT: [MessageHandler(text_filter, get_debt)],
+            GET_INCOME: [MessageHandler(text_filter, get_income)],
+            GET_REGION: [MessageHandler(text_filter, get_region)],
         },
-        # Мы добавляем обработку кнопки "Отмена" в каждый шаг, где ждем текст
         fallbacks=[
             CommandHandler('cancel', cancel),
+            # Этот обработчик теперь будет срабатывать правильно
             MessageHandler(filters.Regex('^Отмена$'), cancel)
         ],
     )
@@ -158,11 +166,6 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu))
     application.add_handler(conv_handler)
-    
-    # Этот обработчик теперь не нужен, так как мы обрабатываем кнопки внутри conv_handler
-    # application.add_handler(CallbackQueryHandler(button_handler)) 
-
-    # Обработчик текстовых сообщений для AI должен идти в конце
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     logger.info(f"Запуск бота на порту {PORT}.")
@@ -174,8 +177,6 @@ def main() -> None:
     )
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (без изменений) ---
-# ... (оставляем функции find_relevant_chunks и get_ai_response без изменений)
-
 def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> str:
     chunks = knowledge_base.split('\n\n')
     question_keywords = set(question.lower().split())
@@ -215,20 +216,6 @@ def get_ai_response(question: str) -> str:
     except Exception as e:
         logger.error(f"Ошибка при обращении к OpenRouter AI: {e}")
         return "К сожалению, произошла ошибка при обрашении к AI-сервису. Попробуйте позже."
-        
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_question = update.message.text
-    await update.message.reply_text("Ищу ответ в базе знаний...")
-    loop = asyncio.get_running_loop()
-    ai_answer = await loop.run_in_executor(None, get_ai_response, user_question)
-    cleaned_answer = ai_answer.replace('<p>', '').replace('</p>', '')
-    while '\n\n\n' in cleaned_answer:
-        cleaned_answer = cleaned_answer.replace('\n\n\n', '\n\n')
-    try:
-        await update.message.reply_text(cleaned_answer, parse_mode='HTML')
-    except Exception as e:
-        logger.error(f"Ошибка форматирования HTML: {e}. Отправка без форматирования.")
-        await update.message.reply_text(cleaned_answer)
 
 if __name__ == "__main__":
     main()
