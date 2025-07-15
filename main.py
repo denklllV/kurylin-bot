@@ -23,10 +23,10 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
 )
-# ВАЖНО: здесь мы жестко задаем точную бесплатную модель, которую хотим использовать
-MODEL_NAME = "qwen/qwen-2-7b-instruct:free"
+# ВАЖНО: вот единственная строка, которую мы меняем на рабочую модель
+MODEL_NAME = "mistralai/mistral-7b-instruct:free"
 
-# --- Загрузка базы знаний (остается без изменений) ---
+# --- Загрузка базы знаний ---
 KNOWLEDGE_BASE = ""
 try:
     with open('bankruptcy_law.md', 'r', encoding='utf-8') as f:
@@ -38,24 +38,38 @@ try:
 except FileNotFoundError:
     logger.warning("Внимание: Файлы с базой знаний не найдены.")
 
-# 2. ФУНКЦИИ-ОБРАБОТЧИКИ БОТА (переписаны под OpenRouter)
+# 2. ФУНКЦИИ-ОБРАБОТЧИКИ БОТА
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Отправляет приветственное сообщение при команде /start."""
     await update.message.reply_text('Здравствуйте! Я ваш юридический AI-ассистент. Задайте мне вопрос.')
 
 def get_ai_response(question: str) -> str:
-    # Здесь мы используем клиент OpenAI для обращения к OpenRouter
+    """Формирует промпт и получает ответ от модели через OpenRouter."""
     system_prompt = (
         "Твоя роль — первоклассный юридический помощник. Твое имя — Вячеслав. "
-        # ... (остальной промпт без изменений)
+        "Твоя речь — человечная, мягкая и эмпатичная. "
+        "Твоя задача — кратко и в общих чертах разъяснять сложные юридические вопросы, донося только самую важную суть."
+        "**СТРОГИЕ ПРАВИЛА:**"
+        "1. **Краткость:** Твой ответ должен быть сжатым, в идеале 2-3 абзаца. Не углубляйся в детали без необходимости."
+        "2. **Никогда не представляйся**, если тебя не спросили напрямую 'Как тебя зовут?'. Сразу переходи к сути ответа."
+        "3. **Никогда не упоминай** слова 'контекст' или 'предоставленная информация'. Отвечай так, будто эта информация — твои собственные знания."
+        "4. **Для форматирования** используй теги HTML: <b>...</b> для жирного, <i>...</i> для курсива. Для создания абзаца используй ОДНУ пустую строку."
     )
+    
     user_prompt = f"Вот база знаний для твоего ответа:\n{KNOWLEDGE_BASE}\n\nВопрос клиента: {question}"
 
     try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {
+                    "role": "system",
+                    "content": system_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt,
+                },
             ],
         )
         return completion.choices[0].message.content
@@ -64,24 +78,31 @@ def get_ai_response(question: str) -> str:
         return "К сожалению, произошла ошибка при обращении к AI-сервису. Попробуйте позже."
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обрабатывает текстовые сообщения от пользователя."""
     user_question = update.message.text
     await update.message.reply_text("Думаю над вашим вопросом...")
+    
     loop = asyncio.get_running_loop()
     ai_answer = await loop.run_in_executor(None, get_ai_response, user_question)
+    
     cleaned_answer = ai_answer.replace('<p>', '').replace('</p>', '')
     while '\n\n\n' in cleaned_answer:
         cleaned_answer = cleaned_answer.replace('\n\n\n', '\n\n')
+        
     try:
         await update.message.reply_text(cleaned_answer, parse_mode='HTML')
     except Exception as e:
-        logger.error(f"Ошибка форматирования HTML: {e}")
+        logger.error(f"Ошибка форматирования HTML: {e}. Отправка без форматирования.")
         await update.message.reply_text(cleaned_answer)
 
-# 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК В РЕЖИМЕ ВЕБХУКА (без изменений)
+# 3. ОСНОВНАЯ ЧАСТЬ - ЗАПУСК В РЕЖИМЕ ВЕБХУКА
 def main() -> None:
+    """Запускает бота в режиме вебхука."""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
     logger.info(f"Запуск бота на порту {PORT}. Вебхук будет установлен на {WEBHOOK_URL}")
     application.run_webhook(
         listen="0.0.0.0",
