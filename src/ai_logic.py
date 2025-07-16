@@ -1,7 +1,8 @@
 # src/ai_logic.py
 import requests
 from openai import OpenAI
-from .config import OPENROUTER_API_KEY, MODEL_NAME, STT_MODEL_NAME, KNOWLEDGE_BASE, logger
+# --- ИЗМЕНЕНИЕ ИМПОРТОВ ---
+from .config import OPENROUTER_API_KEY, MODEL_NAME, HUGGINGFACE_API_KEY, STT_API_URL, KNOWLEDGE_BASE, logger
 
 # Этот клиент остается для функции get_ai_response
 client = OpenAI(
@@ -9,39 +10,27 @@ client = OpenAI(
     api_key=OPENROUTER_API_KEY
 )
 
+# --- ФУНКЦИЯ, ПЕРЕПИСАННАЯ ДЛЯ HUGGINGFACE ---
 def transcribe_voice(voice_path: str) -> str | None:
-    """Отправляет аудиофайл в API для транскрибации через прямой POST-запрос с правильными заголовками."""
-    logger.info(f"Отправка файла {voice_path} на транскрибацию через requests...")
+    """Отправляет аудиофайл в HuggingFace Inference API для транскрибации."""
+    logger.info(f"Отправка файла {voice_path} в HuggingFace API...")
     try:
-        # --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            # Правильное имя HTTP-заголовка - 'Referer'
-            "Referer": "https://github.com/denklllV/kurylin-bot", 
-            "X-Title": "Kurilin AI Bot",
-        }
+        headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
         
-        with open(voice_path, 'rb') as audio_file:
-            files = {
-                'file': (voice_path.split('/')[-1], audio_file, 'audio/mpeg')
-            }
-            data = {
-                'model': STT_MODEL_NAME
-            }
-            
-            response = requests.post(
-                "https://openrouter.ai/api/v1/audio/transcriptions",
-                headers=headers,
-                files=files,
-                data=data
-            )
+        with open(voice_path, "rb") as f:
+            response = requests.post(STT_API_URL, headers=headers, data=f)
         
         response.raise_for_status()
         
         result = response.json()
+        
+        # HuggingFace может вернуть ошибку в теле JSON
+        if 'error' in result:
+            logger.error(f"Ошибка от HuggingFace API: {result['error']}")
+            return None
+            
         transcribed_text = result.get('text')
-
-        logger.info("Аудио успешно транскрибировано через requests.")
+        logger.info(f"Аудио успешно транскрибировано через HuggingFace: «{transcribed_text}»")
         return transcribed_text
 
     except requests.exceptions.RequestException as e:

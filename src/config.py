@@ -17,6 +17,8 @@ OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 MANAGER_CHAT_ID = os.getenv('MANAGER_CHAT_ID')
+# --- НОВЫЙ КЛЮЧ ---
+HUGGINGFACE_API_KEY = os.getenv('HUGGINGFACE_API_KEY')
 
 # --- Настройки деплоя ---
 RENDER_SERVICE_NAME = os.getenv('RENDER_SERVICE_NAME')
@@ -26,8 +28,8 @@ PORT = int(os.environ.get('PORT', 8443))
 # --- Настройки моделей AI ---
 # Модель для генерации ответов (Чат)
 MODEL_NAME = "tngtech/deepseek-r1t2-chimera:free" 
-# --- НОВАЯ ПЕРЕМЕННАЯ ДЛЯ РАСПОЗНАВАНИЯ РЕЧИ ---
-STT_MODEL_NAME = "openai/whisper-large-v3"
+# --- НОВЫЙ АДРЕС API ДЛЯ РАСПОЗНАВАНИЯ РЕЧИ ---
+STT_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
 
 # --- Состояния ConversationHandler ---
 GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(4)
