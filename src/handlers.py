@@ -40,9 +40,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup=main_keyboard
     )
 
-async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_question = update.message.text
-    await update.message.reply_text("Думаю над вашим вопросом...")
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE, text_override: str = None) -> None:
+    """Обрабатывает и текстовые, и распознанные голосовые сообщения."""
+    # Если функция вызвана из handle_voice_message, используем text_override.
+    # Иначе, берем текст из сообщения пользователя.
+    user_question = text_override or update.message.text
+    
+    # Отвечаем "Думаю..." только если это было обычное текстовое сообщение
+    if not text_override:
+        await update.message.reply_text("Думаю над вашим вопросом...")
     
     loop = asyncio.get_running_loop()
     ai_answer = await loop.run_in_executor(None, get_ai_response, user_question)
@@ -58,6 +65,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(cleaned_answer, reply_markup=main_keyboard)
 
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обрабатывает голосовые, конвертирует, транскрибирует и передает текст дальше."""
     await update.message.reply_text("Получил ваше голосовое, расшифровываю...")
     
     voice = update.message.voice
@@ -73,7 +81,6 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         AudioSegment.from_ogg(ogg_path).export(mp3_path, format="mp3")
         logger.info(f"Файл успешно конвертирован в {mp3_path}")
         
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: вызываем синхронную функцию в отдельном потоке ---
         loop = asyncio.get_running_loop()
         transcribed_text = await loop.run_in_executor(None, transcribe_voice, mp3_path)
 
@@ -86,10 +93,12 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if transcribed_text:
         await update.message.reply_text(f"Ваш вопрос: «{transcribed_text}»\n\nИщу ответ...")
-        update.message.text = transcribed_text
-        await handle_text_message(update, context)
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+        # Правильно передаем распознанный текст как аргумент
+        await handle_text_message(update, context, text_override=transcribed_text)
     else:
         await update.message.reply_text("К сожалению, не удалось распознать речь. Попробуйте записать снова или напишите вопрос текстом.")
+
 
 async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
