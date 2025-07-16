@@ -13,9 +13,11 @@ def transcribe_voice(voice_path: str) -> str | None:
     """Отправляет аудиофайл в HuggingFace Inference API для транскрибации."""
     logger.info(f"Отправка файла {voice_path} в HuggingFace API...")
     try:
-        headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+        headers = {
+            "Authorization": f"Bearer {HUGGINGFACE_API_KEY}",
+            "Content-Type": "audio/mpeg",
+        }
         
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: СНАЧАЛА ЧИТАЕМ ФАЙЛ, ПОТОМ ПЕРЕДАЕМ ДАННЫЕ ---
         with open(voice_path, "rb") as f:
             data = f.read()
         
@@ -85,4 +87,11 @@ def get_ai_response(question: str) -> str:
         return completion.choices[0].message.content
     except Exception as e:
         logger.error(f"Ошибка при обращении к OpenRouter AI: {e}")
-        return "К сожалению, произошла ошибка при обрашении к AI-сервису. Попробуйте позже."
+        return "К сожалению, произошла ошибка при обрашении к AI-сервису. Попробуйте позже."```
+
+#### Шаг 2: Отправка на GitHub
+**Отправка на GitHub:**
+```bash
+git add .
+git commit -m "Fix: Force update ai_logic.py with correct Content-Type"
+git push origin main
