@@ -4,8 +4,8 @@ import os
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
+from pydub import AudioSegment # <-- Импортируем pydub
 
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ: импортируем RENDER_SERVICE_NAME ---
 from .config import logger, MANAGER_CHAT_ID, RENDER_SERVICE_NAME, GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 from .database import save_user_to_db, save_lead_to_db
 from .bot_keyboards import main_keyboard, cancel_keyboard
@@ -23,10 +23,7 @@ async def send_notification_to_manager(context: ContextTypes.DEFAULT_TYPE, messa
         logger.error(f"Не удалось отправить уведомление менеджеру: {e}")
 
 # --- Основные обработчики ---
-
-# --- НОВАЯ КОМАНДА ДЛЯ ДИАГНОСТИКИ ---
 async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отправляет имя сервиса, на котором запущен бот."""
     service_name = RENDER_SERVICE_NAME or "Не определено"
     await update.message.reply_text(f"Я запущен на сервисе: {service_name}")
 
@@ -67,11 +64,24 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     voice_file = await voice.get_file()
     
     os.makedirs('temp', exist_ok=True)
-    voice_path = f"temp/{voice.file_id}.ogg"
-    await voice_file.download_to_drive(voice_path)
+    ogg_path = f"temp/{voice.file_id}.ogg"
+    await voice_file.download_to_drive(ogg_path)
     
-    transcribed_text = await transcribe_voice(voice_path)
-    os.remove(voice_path)
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: КОНВЕРТАЦИЯ В MP3 ---
+    mp3_path = f"temp/{voice.file_id}.mp3"
+    try:
+        AudioSegment.from_ogg(ogg_path).export(mp3_path, format="mp3")
+        logger.info(f"Файл успешно конвертирован в {mp3_path}")
+        # Передаем на транскрибацию путь к MP3 файлу
+        transcribed_text = await transcribe_voice(mp3_path)
+    except Exception as e:
+        logger.error(f"Ошибка конвертации файла: {e}")
+        transcribed_text = None
+    
+    # Очищаем временные файлы
+    os.remove(ogg_path)
+    if os.path.exists(mp3_path):
+        os.remove(mp3_path)
     
     if transcribed_text:
         await update.message.reply_text(f"Ваш вопрос: «{transcribed_text}»\n\nИщу ответ...")
@@ -79,6 +89,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await handle_text_message(update, context)
     else:
         await update.message.reply_text("К сожалению, не удалось распознать речь. Попробуйте записать снова или напишите вопрос текстом.")
+
 
 async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
