@@ -5,7 +5,7 @@ from openai import OpenAI
 # Импортируем все необходимое из нашего центрального конфига
 from .config import OPENROUTER_API_KEY, MODEL_NAME, KNOWLEDGE_BASE, logger
 
-# Клиент создается один раз при загрузке этого модуля, а не при каждом вызове
+# Клиент создается один раз при загрузке этого модуля
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY
@@ -22,17 +22,14 @@ def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> st
         if score > 0:
             scored_chunks.append((score, chunk))
     
-    # Сортируем чанки по релевантности и берем лучшие
     scored_chunks.sort(reverse=True, key=lambda x: x[0])
     top_chunks = [chunk for score, chunk in scored_chunks[:max_chunks]]
     return "\n\n".join(top_chunks)
 
 def get_ai_response(question: str) -> str:
     """Формирует запрос к AI на основе релевантных чанков и возвращает ответ."""
-    # Шаг 1: Найти релевантный контекст внутри нашей базы знаний
     dynamic_context = find_relevant_chunks(question, KNOWLEDGE_BASE)
     
-    # Шаг 2: Определить системный промпт (инструкцию для модели)
     system_prompt = (
         "Твоя роль — первоклассный юридический помощник. Твое имя — Вячеслав. "
         "Твоя речь — человечная, мягкая и эмпатичная. "
@@ -45,16 +42,12 @@ def get_ai_response(question: str) -> str:
         "4. **Для форматирования** используй теги HTML: <b>...</b> для жирного, <i>...</i> для курсива. Для создания абзаца используй ОДНУ пустую строку."
     )
     
-    # Шаг 3: Сформировать финальный промпт для пользователя
     user_prompt = f"База знаний:\n{dynamic_context}\n\nВопрос клиента: {question}"
 
     try:
-        # Шаг 4: Отправить запрос к AI, используя extra_body для указания модели
-        # Это изменение соответствует документации OpenRouter для данной модели
+        # Возвращаем стандартный и правильный способ вызова
         completion = client.chat.completions.create(
-            extra_body={
-                "model": MODEL_NAME,
-            },
+            model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}

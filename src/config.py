@@ -26,11 +26,10 @@ WEBHOOK_URL = f"https://{RENDER_SERVICE_NAME}.onrender.com/{TELEGRAM_TOKEN}"
 PORT = int(os.environ.get('PORT', 8443))
 
 # --- Настройки моделей и AI ---
-# Мы вынесли имя модели сюда, чтобы его было легко менять
-MODEL_NAME = "tngtech/deepseek-v2-chat-r1t2-chimera:free" # Ваша новая модель
+# ИСПРАВЛЕННОЕ ИМЯ МОДЕЛИ (без моей опечатки)
+MODEL_NAME = "tngtech/deepseek-r1t2-chimera:free" 
 
 # --- Состояния для ConversationHandler ---
-# Эти константы теперь хранятся здесь, а не в глобальной области main.py
 GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(4)
 
 # --- Загрузка базы знаний ---
