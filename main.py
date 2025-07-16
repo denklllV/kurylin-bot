@@ -30,7 +30,7 @@ MANAGER_CHAT_ID = os.getenv('MANAGER_CHAT_ID')
 # --- Клиенты сервисов ---
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_API_KEY)
-MODEL_NAME = "mistralai/mistral-7b-instruct:free"
+MODEL_NAME = "tngtech/deepseek-r1t2-chimera:free"
 
 # ... (Загрузка базы знаний, Состояния, Клавиатуры - без изменений)
 KNOWLEDGE_BASE = ""
