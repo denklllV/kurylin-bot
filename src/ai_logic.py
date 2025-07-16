@@ -1,7 +1,6 @@
 # src/ai_logic.py
 import requests
 from openai import OpenAI
-# --- ИЗМЕНЕНИЕ ИМПОРТОВ ---
 from .config import OPENROUTER_API_KEY, MODEL_NAME, HUGGINGFACE_API_KEY, STT_API_URL, KNOWLEDGE_BASE, logger
 
 # Этот клиент остается для функции get_ai_response
@@ -10,21 +9,22 @@ client = OpenAI(
     api_key=OPENROUTER_API_KEY
 )
 
-# --- ФУНКЦИЯ, ПЕРЕПИСАННАЯ ДЛЯ HUGGINGFACE ---
 def transcribe_voice(voice_path: str) -> str | None:
     """Отправляет аудиофайл в HuggingFace Inference API для транскрибации."""
     logger.info(f"Отправка файла {voice_path} в HuggingFace API...")
     try:
         headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
         
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: СНАЧАЛА ЧИТАЕМ ФАЙЛ, ПОТОМ ПЕРЕДАЕМ ДАННЫЕ ---
         with open(voice_path, "rb") as f:
-            response = requests.post(STT_API_URL, headers=headers, data=f)
+            data = f.read()
+        
+        response = requests.post(STT_API_URL, headers=headers, data=data)
         
         response.raise_for_status()
         
         result = response.json()
         
-        # HuggingFace может вернуть ошибку в теле JSON
         if 'error' in result:
             logger.error(f"Ошибка от HuggingFace API: {result['error']}")
             return None
