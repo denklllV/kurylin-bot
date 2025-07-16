@@ -7,14 +7,14 @@ client = OpenAI(
     api_key=OPENROUTER_API_KEY
 )
 
-# --- НОВАЯ ФУНКЦИЯ, КОТОРУЮ МЫ ЗАБЫЛИ ДОБАВИТЬ ---
-async def transcribe_voice(voice_path: str) -> str | None:
-    """Отправляет аудиофайл в API для транскрибации."""
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ: убираем async/await ---
+def transcribe_voice(voice_path: str) -> str | None:
+    """Отправляет аудиофайл в API для транскрибации (синхронно)."""
     logger.info(f"Отправка файла {voice_path} на транскрибацию...")
     try:
         with open(voice_path, "rb") as audio_file:
-            # Используем client.audio.transcriptions.create для speech-to-text
-            transcription = await client.audio.transcriptions.create(
+            # Используем обычный, синхронный вызов
+            transcription = client.audio.transcriptions.create(
                 model=STT_MODEL_NAME,
                 file=audio_file
             )
@@ -25,7 +25,6 @@ async def transcribe_voice(voice_path: str) -> str | None:
         return None
 
 def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> str:
-    """Находит наиболее релевантные части базы знаний по ключевым словам."""
     chunks = knowledge_base.split('\n\n')
     question_keywords = set(question.lower().split())
     scored_chunks = []
@@ -40,7 +39,6 @@ def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> st
     return "\n\n".join(top_chunks)
 
 def get_ai_response(question: str) -> str:
-    """Формирует запрос к AI на основе релевантных чанков и возвращает ответ."""
     dynamic_context = find_relevant_chunks(question, KNOWLEDGE_BASE)
     
     system_prompt = (
