@@ -1,4 +1,6 @@
+# requirements.txt
 python-telegram-bot[webhooks]==20.7
 openai
 supabase==2.5.0
 gotrue==2.5.0
+python-dotenv
