@@ -1,30 +1,63 @@
 # src/ai_logic.py
+import requests # <-- Импортируем новую библиотеку
 from openai import OpenAI
 from .config import OPENROUTER_API_KEY, MODEL_NAME, STT_MODEL_NAME, KNOWLEDGE_BASE, logger
 
+# Этот клиент остается для функции get_ai_response
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY
 )
 
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ: убираем async/await ---
+# --- ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ ФУНКЦИЯ ---
 def transcribe_voice(voice_path: str) -> str | None:
-    """Отправляет аудиофайл в API для транскрибации (синхронно)."""
-    logger.info(f"Отправка файла {voice_path} на транскрибацию...")
+    """Отправляет аудиофайл в API для транскрибации через прямой POST-запрос."""
+    logger.info(f"Отправка файла {voice_path} на транскрибацию через requests...")
     try:
-        with open(voice_path, "rb") as audio_file:
-            # Используем обычный, синхронный вызов
-            transcription = client.audio.transcriptions.create(
-                model=STT_MODEL_NAME,
-                file=audio_file
+        # 1. Формируем заголовки с авторизацией
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        }
+        # 2. Открываем аудиофайл для чтения в бинарном режиме
+        with open(voice_path, 'rb') as audio_file:
+            # 3. Формируем данные для отправки (модель) и сам файл
+            files = {
+                'file': (voice_path.split('/')[-1], audio_file, 'audio/mpeg')
+            }
+            data = {
+                'model': STT_MODEL_NAME
+            }
+            # 4. Делаем POST-запрос
+            response = requests.post(
+                "https://openrouter.ai/api/v1/audio/transcriptions",
+                headers=headers,
+                files=files,
+                data=data
             )
-        logger.info("Аудио успешно транскрибировано.")
-        return transcription.text
+        
+        # 5. Проверяем, что запрос прошел успешно
+        response.raise_for_status()
+        
+        # 6. Извлекаем текст из JSON-ответа
+        result = response.json()
+        transcribed_text = result.get('text')
+
+        logger.info("Аудио успешно транскрибировано через requests.")
+        return transcribed_text
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Ошибка HTTP-запроса при транскрибации: {e}")
+        # Логируем тело ответа, если есть
+        if e.response is not None:
+            logger.error(f"Тело ответа: {e.response.text}")
+        return None
     except Exception as e:
-        logger.error(f"Ошибка при транскрибации аудио: {e}")
+        logger.error(f"Неизвестная ошибка при транскрибации: {e}")
         return None
 
+# --- Остальные функции остаются без изменений ---
 def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> str:
+    # ... (код без изменений)
     chunks = knowledge_base.split('\n\n')
     question_keywords = set(question.lower().split())
     scored_chunks = []
@@ -39,6 +72,7 @@ def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> st
     return "\n\n".join(top_chunks)
 
 def get_ai_response(question: str) -> str:
+    # ... (код без изменений)
     dynamic_context = find_relevant_chunks(question, KNOWLEDGE_BASE)
     
     system_prompt = (

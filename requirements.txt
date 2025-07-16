@@ -5,3 +5,4 @@ supabase==2.5.0
 gotrue==2.5.0
 python-dotenv
 pydub
+requests
