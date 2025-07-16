@@ -1,15 +1,28 @@
 # src/ai_logic.py
-
 from openai import OpenAI
+from .config import OPENROUTER_API_KEY, MODEL_NAME, STT_MODEL_NAME, KNOWLEDGE_BASE, logger
 
-# Импортируем все необходимое из нашего центрального конфига
-from .config import OPENROUTER_API_KEY, MODEL_NAME, KNOWLEDGE_BASE, logger
-
-# Клиент создается один раз при загрузке этого модуля
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY
 )
+
+# --- НОВАЯ ФУНКЦИЯ, КОТОРУЮ МЫ ЗАБЫЛИ ДОБАВИТЬ ---
+async def transcribe_voice(voice_path: str) -> str | None:
+    """Отправляет аудиофайл в API для транскрибации."""
+    logger.info(f"Отправка файла {voice_path} на транскрибацию...")
+    try:
+        with open(voice_path, "rb") as audio_file:
+            # Используем client.audio.transcriptions.create для speech-to-text
+            transcription = await client.audio.transcriptions.create(
+                model=STT_MODEL_NAME,
+                file=audio_file
+            )
+        logger.info("Аудио успешно транскрибировано.")
+        return transcription.text
+    except Exception as e:
+        logger.error(f"Ошибка при транскрибации аудио: {e}")
+        return None
 
 def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> str:
     """Находит наиболее релевантные части базы знаний по ключевым словам."""
@@ -45,7 +58,6 @@ def get_ai_response(question: str) -> str:
     user_prompt = f"База знаний:\n{dynamic_context}\n\nВопрос клиента: {question}"
 
     try:
-        # Возвращаем стандартный и правильный способ вызова
         completion = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
