@@ -1,4 +1,5 @@
 # src/ai_logic.py
+
 from openai import OpenAI
 
 # Импортируем все необходимое из нашего центрального конфига
@@ -48,9 +49,12 @@ def get_ai_response(question: str) -> str:
     user_prompt = f"База знаний:\n{dynamic_context}\n\nВопрос клиента: {question}"
 
     try:
-        # Шаг 4: Отправить запрос к AI
+        # Шаг 4: Отправить запрос к AI, используя extra_body для указания модели
+        # Это изменение соответствует документации OpenRouter для данной модели
         completion = client.chat.completions.create(
-            model=MODEL_NAME,
+            extra_body={
+                "model": MODEL_NAME,
+            },
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
