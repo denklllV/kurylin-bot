@@ -87,11 +87,6 @@ def get_ai_response(question: str) -> str:
         return completion.choices[0].message.content
     except Exception as e:
         logger.error(f"Ошибка при обращении к OpenRouter AI: {e}")
-        return "К сожалению, произошла ошибка при обрашении к AI-сервису. Попробуйте позже."```
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: УБРАНЫ ЛИШНИЕ СИМВОЛЫ ---
+        return "К сожалению, произошла ошибка при обрашении к AI-сервису. Попробуйте позже."
 
-#### Шаг 2: Отправка на GitHub
-**Отправка на GitHub:**
-```bash
-git add .
-git commit -m "Fix: Force update ai_logic.py with correct Content-Type"
-git push origin main
