@@ -1,5 +1,5 @@
 # src/ai_logic.py
-import requests # <-- Импортируем новую библиотеку
+import requests
 from openai import OpenAI
 from .config import OPENROUTER_API_KEY, MODEL_NAME, STT_MODEL_NAME, KNOWLEDGE_BASE, logger
 
@@ -9,25 +9,27 @@ client = OpenAI(
     api_key=OPENROUTER_API_KEY
 )
 
-# --- ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ ФУНКЦИЯ ---
 def transcribe_voice(voice_path: str) -> str | None:
-    """Отправляет аудиофайл в API для транскрибации через прямой POST-запрос."""
+    """Отправляет аудиофайл в API для транскрибации через прямой POST-запрос с обязательными заголовками."""
     logger.info(f"Отправка файла {voice_path} на транскрибацию через requests...")
     try:
-        # 1. Формируем заголовки с авторизацией
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: ДОБАВЛЯЕМ ОБЯЗАТЕЛЬНЫЕ ЗАГОЛОВКИ ---
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            # Укажи здесь URL твоего GitHub репозитория или сайта
+            "HTTP-Referer": "https://github.com/denklllV/kurylin-bot", 
+            # Укажи здесь название твоего проекта
+            "X-Title": "Kurilin AI Bot",
         }
-        # 2. Открываем аудиофайл для чтения в бинарном режиме
+        
         with open(voice_path, 'rb') as audio_file:
-            # 3. Формируем данные для отправки (модель) и сам файл
             files = {
                 'file': (voice_path.split('/')[-1], audio_file, 'audio/mpeg')
             }
             data = {
                 'model': STT_MODEL_NAME
             }
-            # 4. Делаем POST-запрос
+            
             response = requests.post(
                 "https://openrouter.ai/api/v1/audio/transcriptions",
                 headers=headers,
@@ -35,10 +37,8 @@ def transcribe_voice(voice_path: str) -> str | None:
                 data=data
             )
         
-        # 5. Проверяем, что запрос прошел успешно
         response.raise_for_status()
         
-        # 6. Извлекаем текст из JSON-ответа
         result = response.json()
         transcribed_text = result.get('text')
 
@@ -47,9 +47,8 @@ def transcribe_voice(voice_path: str) -> str | None:
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Ошибка HTTP-запроса при транскрибации: {e}")
-        # Логируем тело ответа, если есть
         if e.response is not None:
-            logger.error(f"Тело ответа: {e.response.text}")
+            logger.error(f"Код ответа: {e.response.status_code}, Тело ответа: {e.response.text}")
         return None
     except Exception as e:
         logger.error(f"Неизвестная ошибка при транскрибации: {e}")
@@ -57,7 +56,6 @@ def transcribe_voice(voice_path: str) -> str | None:
 
 # --- Остальные функции остаются без изменений ---
 def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> str:
-    # ... (код без изменений)
     chunks = knowledge_base.split('\n\n')
     question_keywords = set(question.lower().split())
     scored_chunks = []
@@ -72,7 +70,6 @@ def find_relevant_chunks(question: str, knowledge_base: str, max_chunks=5) -> st
     return "\n\n".join(top_chunks)
 
 def get_ai_response(question: str) -> str:
-    # ... (код без изменений)
     dynamic_context = find_relevant_chunks(question, KNOWLEDGE_BASE)
     
     system_prompt = (
