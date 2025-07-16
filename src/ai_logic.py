@@ -10,15 +10,14 @@ client = OpenAI(
 )
 
 def transcribe_voice(voice_path: str) -> str | None:
-    """Отправляет аудиофайл в API для транскрибации через прямой POST-запрос с обязательными заголовками."""
+    """Отправляет аудиофайл в API для транскрибации через прямой POST-запрос с правильными заголовками."""
     logger.info(f"Отправка файла {voice_path} на транскрибацию через requests...")
     try:
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: ДОБАВЛЯЕМ ОБЯЗАТЕЛЬНЫЕ ЗАГОЛОВКИ ---
+        # --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            # Укажи здесь URL твоего GitHub репозитория или сайта
-            "HTTP-Referer": "https://github.com/denklllV/kurylin-bot", 
-            # Укажи здесь название твоего проекта
+            # Правильное имя HTTP-заголовка - 'Referer'
+            "Referer": "https://github.com/denklllV/kurylin-bot", 
             "X-Title": "Kurilin AI Bot",
         }
         
