@@ -86,36 +86,27 @@ async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def broadcast_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, dry_run: bool):
     """Общий обработчик для команд рассылки."""
-    # --- НАЧАЛО ДИАГНОСТИЧЕСКОГО БЛОКА ---
-    # Сохраняем ID пользователя и ID админа в переменные для наглядности в логах
     user_id_from_message = str(update.effective_user.id)
     manager_id_from_config = MANAGER_CHAT_ID
     
-    # Выводим в лог оба значения и их типы данных. Это поможет найти расхождения.
     logger.info(f"[AUTH CHECK] Сравниваю ID. Пользователь: '{user_id_from_message}' (тип: {type(user_id_from_message)}). "
                 f"Админ из настроек: '{manager_id_from_config}' (тип: {type(manager_id_from_config)}).")
-    # --- КОНЕЦ ДИАГНОСТИЧЕСКОГО БЛОКА ---
 
-    # ШАГ 1: ПРОВЕРКА БЕЗОПАСНОСТИ
-    # Сравниваем ID пользователя, отправившего команду, с ID менеджера из настроек.
     if user_id_from_message != manager_id_from_config:
         logger.warning(f"Попытка несанкционированного доступа к рассылке от user_id: {user_id_from_message}")
         await update.message.reply_text("У вас нет прав для выполнения этой команды.")
         return
 
-    # ШАГ 2: ИЗВЛЕЧЕНИЕ ТЕКСТА СООБЩЕНИЯ
     message = " ".join(context.args)
     if not message:
         await update.message.reply_text("Вы не указали сообщение для рассылки. Пример: /broadcast Привет, мир!")
         return
 
-    # ШАГ 3: ПОЛУЧЕНИЕ СПИСКА ПОЛЬЗОВАТЕЛЕЙ
     user_ids = get_lead_user_ids()
     if not user_ids:
         await update.message.reply_text("Не найдено ни одного пользователя, заполнившего анкету.")
         return
 
-    # ШАГ 4: ЗАПУСК (ТЕСТОВЫЙ ИЛИ БОЕВОЙ)
     if dry_run:
         await update.message.reply_text(
             f"--- ТЕСТОВЫЙ ЗАПУСК ---\n"
@@ -165,7 +156,7 @@ async def get_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Укажите ваш основной источник дохода.", reply_markup=cancel_keyboard)
     return GET_INCOME
 
-async def get_income(update: Update, context: Types.DEFAULT_TYPE) -> int:
+async def get_income(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: # <-- ЗДЕСЬ БЫЛА ОШИБКА, ТЕПЕРЬ ИСПРАВЛЕНО
     context.user_data['income'] = update.message.text
     await update.message.reply_text("В каком регионе (область, край) вы прописаны?", reply_markup=cancel_keyboard)
     return GET_REGION
