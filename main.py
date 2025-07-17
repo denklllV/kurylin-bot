@@ -7,7 +7,7 @@ from src.handlers import (
     start,
     handle_text_message,
     handle_voice_message,
-    whoami, # <-- Импортируем нашу новую команду
+    whoami,
     start_form,
     get_name,
     get_debt,
@@ -15,6 +15,8 @@ from src.handlers import (
     get_region,
     cancel,
     contact_human,
+    handle_broadcast,
+    handle_broadcast_dry_run,
 )
 
 def main() -> None:
@@ -38,16 +40,23 @@ def main() -> None:
         fallbacks=[CommandHandler('cancel', cancel), MessageHandler(cancel_filter, cancel)],
     )
 
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: регистрируем команду ---
+    # Регистрируем административные команды
+    application.add_handler(CommandHandler("broadcast", handle_broadcast))
+    application.add_handler(CommandHandler("broadcast_dry_run", handle_broadcast_dry_run))
+
+    # Регистрируем команды и кнопки для обычных пользователей
     application.add_handler(CommandHandler("whoami", whoami))
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(contact_button_filter, contact_human))
     
+    # Регистрируем обработчик голосовых
     application.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
     
+    # Регистрируем обработчик для ВСЕХ ОСТАЛЬНЫХ текстовых сообщений
+    # Он должен игнорировать команды (~) и кнопки, которые обрабатываются выше
     application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & ~form_button_filter & ~contact_button_filter,
+        filters.TEXT & ~filters.COMMAND & ~form_button_filter & ~contact_button_filter, # <-- ИЗМЕНЕНИЕ ЗДЕСЬ
         handle_text_message
     ))
 
