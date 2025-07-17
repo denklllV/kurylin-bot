@@ -49,3 +49,26 @@ def save_lead_to_db(user_id: int, lead_data: dict):
     except Exception as e:
         logger.error(f"Ошибка при сохранении анкеты для {user_id} в Supabase: {e}")
         return False
+
+# --- НИЖЕ ДОБАВЛЕНА НОВАЯ ФУНКЦИЯ ---
+
+def get_all_user_ids() -> list:
+    """
+    НОВАЯ ФУНКЦИЯ для Шага 1.
+    Извлекает ID всех пользователей из таблицы 'users'.
+    Это нужно для скрипта массовой рассылки.
+    """
+    try:
+        # Делаем простой запрос к таблице 'users' и просим вернуть только колонку 'user_id'
+        response = supabase.table('users').select('user_id').execute()
+        
+        # API Supabase возвращает объект, где сами данные лежат в поле .data
+        # Мы проходимся по списку словарей (например, [{'user_id': 123}, {'user_id': 456}])
+        # и извлекаем из каждого словаря только значение ID.
+        user_ids = [item['user_id'] for item in response.data]
+        
+        logger.info(f"Найдено {len(user_ids)} пользователей для возможной рассылки.")
+        return user_ids
+    except Exception as e:
+        logger.error(f"Критическая ошибка при получении списка пользователей из Supabase: {e}")
+        return [] # Возвращаем пустой список, чтобы в случае ошибки ничего не сломалось
