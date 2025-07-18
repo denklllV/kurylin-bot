@@ -11,6 +11,10 @@ from .database import save_user_to_db, save_lead_to_db, get_lead_user_ids
 from .bot_keyboards import main_keyboard, cancel_keyboard
 from .ai_logic import get_ai_response, transcribe_voice
 
+# Глобальная переменная для хранения ID последнего загруженного файла
+LAST_PDF_FILE_ID = None
+
+# ... все функции до contact_human остаются без изменений ...
 async def send_notification_to_manager(context: ContextTypes.DEFAULT_TYPE, message_text: str):
     if not MANAGER_CHAT_ID:
         logger.warning("Переменная MANAGER_CHAT_ID не установлена.")
@@ -84,16 +88,86 @@ async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await send_notification_to_manager(context, message_for_manager)
     await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=main_keyboard)
 
-async def broadcast_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, dry_run: bool):
-    """Общий обработчик для команд рассылки."""
-    user_id_from_message = str(update.effective_user.id)
-    manager_id_from_config = MANAGER_CHAT_ID
-    
-    logger.info(f"[AUTH CHECK] Сравниваю ID. Пользователь: '{user_id_from_message}' (тип: {type(user_id_from_message)}). "
-                f"Админ из настроек: '{manager_id_from_config}' (тип: {type(manager_id_from_config)}).")
 
-    if user_id_from_message != manager_id_from_config:
-        logger.warning(f"Попытка несанкционированного доступа к рассылке от user_id: {user_id_from_message}")
+# --- НОВЫЙ ФУНКЦИОНАЛ РАССЫЛКИ PDF ---
+
+async def handle_admin_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает PDF-файл, отправленный администратором.
+    """
+    # Проверяем, что сообщение пришло от администратора
+    if str(update.effective_user.id) != MANAGER_CHAT_ID:
+        logger.warning(f"Пользователь {update.effective_user.id} попытался загрузить документ, не будучи админом.")
+        return
+
+    if not update.message.document:
+        return # Игнорируем, если это не документ
+    
+    global LAST_PDF_FILE_ID
+    LAST_PDF_FILE_ID = update.message.document.file_id
+    
+    logger.info(f"Администратор загрузил новый PDF. File ID: {LAST_PDF_FILE_ID}")
+    
+    await update.message.reply_text(
+        f"✅ Файл '{update.message.document.file_name}' получен и готов к рассылке.\n\n"
+        f"Используйте команду <code>/broadcast_pdf Ваш текст...</code> для его отправки.",
+        parse_mode=ParseMode.HTML
+    )
+
+async def handle_broadcast_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает команду рассылки PDF-файла.
+    """
+    # Шаг 1: Проверка прав доступа и наличия файла
+    if str(update.effective_user.id) != MANAGER_CHAT_ID:
+        await update.message.reply_text("У вас нет прав для выполнения этой команды.")
+        return
+        
+    if not LAST_PDF_FILE_ID:
+        await update.message.reply_text("Сначала нужно отправить мне PDF-файл, который вы хотите разослать.")
+        return
+
+    # Шаг 2: Получение текста подписи и списка пользователей
+    caption_text = " ".join(context.args)
+    if not caption_text:
+        await update.message.reply_text("Вы не указали текст подписи для файла. Пример: /broadcast_pdf Это важный документ.")
+        return
+
+    user_ids = get_lead_user_ids()
+    if not user_ids:
+        await update.message.reply_text("Не найдено ни одного пользователя, заполнившего анкету.")
+        return
+
+    # Шаг 3: Рассылка
+    await update.message.reply_text(f"Начинаю рассылку PDF-файла для {len(user_ids)} пользователей...")
+    successful_sends = 0
+    failed_sends = 0
+
+    for user_id in user_ids:
+        try:
+            # Используем метод send_document вместо send_message
+            await context.bot.send_document(
+                chat_id=user_id,
+                document=LAST_PDF_FILE_ID,
+                caption=caption_text,
+                parse_mode=ParseMode.HTML
+            )
+            successful_sends += 1
+        except Exception as e:
+            failed_sends += 1
+            logger.error(f"Ошибка при отправке PDF пользователю {user_id}: {e}")
+        await asyncio.sleep(0.1)
+
+    await update.message.reply_text(
+        f"✅ Рассылка PDF завершена!\n"
+        f"Успешно отправлено: {successful_sends}\n"
+        f"Не удалось отправить: {failed_sends}"
+    )
+
+
+# --- СТАРЫЙ ФУНКЦИОНАЛ РАССЫЛКИ ТЕКСТА (остается без изменений) ---
+async def broadcast_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, dry_run: bool):
+    if str(update.effective_user.id) != MANAGER_CHAT_ID:
         await update.message.reply_text("У вас нет прав для выполнения этой команды.")
         return
 
@@ -123,7 +197,7 @@ async def broadcast_command_handler(update: Update, context: ContextTypes.DEFAUL
         try:
             await context.bot.send_message(chat_id=user_id, text=message, parse_mode=ParseMode.HTML)
             successful_sends += 1
-        except TelegramError as e:
+        except Exception as e:
             failed_sends += 1
             logger.error(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
         await asyncio.sleep(0.1)
@@ -135,13 +209,12 @@ async def broadcast_command_handler(update: Update, context: ContextTypes.DEFAUL
     )
 
 async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик для 'боевой' рассылки /broadcast"""
     await broadcast_command_handler(update, context, dry_run=False)
 
 async def handle_broadcast_dry_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик для тестовой рассылки /broadcast_dry_run"""
     await broadcast_command_handler(update, context, dry_run=True)
 
+# ... анкетный блок (start_form, get_name, и т.д.) остается без изменений ...
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Отлично! Приступаем к заполнению анкеты.\n\nКак я могу к вам обращаться?", reply_markup=cancel_keyboard)
     return GET_NAME
@@ -156,7 +229,7 @@ async def get_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Укажите ваш основной источник дохода.", reply_markup=cancel_keyboard)
     return GET_INCOME
 
-async def get_income(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int: # <-- ЗДЕСЬ БЫЛА ОШИБКА, ТЕПЕРЬ ИСПРАВЛЕНО
+async def get_income(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['income'] = update.message.text
     await update.message.reply_text("В каком регионе (область, край) вы прописаны?", reply_markup=cancel_keyboard)
     return GET_REGION

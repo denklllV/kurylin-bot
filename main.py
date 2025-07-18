@@ -17,6 +17,8 @@ from src.handlers import (
     contact_human,
     handle_broadcast,
     handle_broadcast_dry_run,
+    handle_admin_document,  # <-- НОВЫЙ ИМПОРТ
+    handle_broadcast_pdf,   # <-- НОВЫЙ ИМПОРТ
 )
 
 def main() -> None:
@@ -43,6 +45,7 @@ def main() -> None:
     # Регистрируем административные команды
     application.add_handler(CommandHandler("broadcast", handle_broadcast))
     application.add_handler(CommandHandler("broadcast_dry_run", handle_broadcast_dry_run))
+    application.add_handler(CommandHandler("broadcast_pdf", handle_broadcast_pdf)) # <-- НОВАЯ КОМАНДА
 
     # Регистрируем команды и кнопки для обычных пользователей
     application.add_handler(CommandHandler("whoami", whoami))
@@ -50,13 +53,15 @@ def main() -> None:
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(contact_button_filter, contact_human))
     
+    # Регистрируем обработчик для документов от администратора
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_admin_document)) # <-- НОВЫЙ ОБРАБОТЧИК
+    
     # Регистрируем обработчик голосовых
     application.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
     
     # Регистрируем обработчик для ВСЕХ ОСТАЛЬНЫХ текстовых сообщений
-    # Он должен игнорировать команды (~) и кнопки, которые обрабатываются выше
     application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & ~form_button_filter & ~contact_button_filter, # <-- ИЗМЕНЕНИЕ ЗДЕСЬ
+        filters.TEXT & ~filters.COMMAND & ~form_button_filter & ~contact_button_filter,
         handle_text_message
     ))
 
