@@ -17,7 +17,6 @@ OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 MANAGER_CHAT_ID = os.getenv('MANAGER_CHAT_ID')
-# --- НОВЫЙ КЛЮЧ ---
 HUGGINGFACE_API_KEY = os.getenv('HUGGINGFACE_API_KEY')
 
 # --- Настройки деплоя ---
@@ -26,13 +25,18 @@ WEBHOOK_URL = f"https://{RENDER_SERVICE_NAME}.onrender.com/{TELEGRAM_TOKEN}"
 PORT = int(os.environ.get('PORT', 8443))
 
 # --- Настройки моделей AI ---
-# Модель для генерации ответов (Чат)
 MODEL_NAME = "tngtech/deepseek-r1t2-chimera:free" 
-# --- НОВЫЙ АДРЕС API ДЛЯ РАСПОЗНАВАНИЯ РЕЧИ ---
 STT_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
 
 # --- Состояния ConversationHandler ---
 GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(4)
+
+# --- НОВЫЕ НАСТРОЙКИ ДЛЯ ОПЦИОНАЛЬНОГО ЛИД-МАГНИТА ---
+# os.getenv('LEAD_MAGNET_ENABLED', 'False').lower() in ('true', '1', 't') - это надежный способ
+# прочитать булево значение. Он вернет True, если переменная равна 'true', '1' или 't'.
+# В противном случае, или если переменной нет, он вернет False.
+LEAD_MAGNET_ENABLED = os.getenv('LEAD_MAGNET_ENABLED', 'False').lower() in ('true', '1', 't')
+LEAD_MAGNET_FILE_ID = os.getenv('LEAD_MAGNET_FILE_ID')
 
 # --- База знаний ---
 KNOWLEDGE_BASE = ""
