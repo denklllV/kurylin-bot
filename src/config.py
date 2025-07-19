@@ -31,12 +31,12 @@ STT_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-
 # --- Состояния ConversationHandler ---
 GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(4)
 
-# --- НОВЫЕ НАСТРОЙКИ ДЛЯ ОПЦИОНАЛЬНОГО ЛИД-МАГНИТА ---
-# os.getenv('LEAD_MAGNET_ENABLED', 'False').lower() in ('true', '1', 't') - это надежный способ
-# прочитать булево значение. Он вернет True, если переменная равна 'true', '1' или 't'.
-# В противном случае, или если переменной нет, он вернет False.
+# --- Настройки опционального лид-магнита ---
 LEAD_MAGNET_ENABLED = os.getenv('LEAD_MAGNET_ENABLED', 'False').lower() in ('true', '1', 't')
 LEAD_MAGNET_FILE_ID = os.getenv('LEAD_MAGNET_FILE_ID')
+
+# --- Новая переменная для Google Sheets ---
+GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 
 # --- База знаний ---
 KNOWLEDGE_BASE = ""

@@ -1,13 +1,12 @@
 # src/database.py
 from supabase import create_client, Client
+from datetime import datetime
 from .config import SUPABASE_URL, SUPABASE_KEY, logger
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def save_user_to_db(user_id: int, username: str, first_name: str, utm_source: str = None):
-    """Сохраняет или обновляет информацию о пользователе."""
     try:
-        # В API v2.x метод count возвращает только число, а не кортеж
         response = supabase.table('users').select('user_id', count='exact').eq('user_id', user_id).execute()
         if response.count > 0:
             supabase.table('users').update({'username': username, 'first_name': first_name}).eq('user_id', user_id).execute()
@@ -39,7 +38,6 @@ def save_lead_to_db(user_id: int, lead_data: dict):
         return False
 
 def get_lead_user_ids() -> list:
-    """Извлекает УНИКАЛЬНЫЕ ID пользователей, заполнивших анкету."""
     try:
         response = supabase.table('leads').select('user_id').execute()
         all_ids = [item['user_id'] for item in response.data]
