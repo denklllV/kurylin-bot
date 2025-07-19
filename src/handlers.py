@@ -6,19 +6,11 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from pydub import AudioSegment
 
-# Добавляем импорт новых переменных
 from .config import logger, MANAGER_CHAT_ID, RENDER_SERVICE_NAME, GET_NAME, GET_DEBT, GET_INCOME, GET_REGION, LEAD_MAGNET_ENABLED, LEAD_MAGNET_FILE_ID
 from .database import save_user_to_db, save_lead_to_db, get_lead_user_ids
 from .bot_keyboards import main_keyboard, cancel_keyboard
 from .ai_logic import get_ai_response, transcribe_voice
-
-# ... весь код до функции get_region остается без изменений ...
-# (send_notification_to_manager, whoami, start, handle_text_message, handle_voice_message, 
-# contact_human, handle_admin_document, handle_broadcast_pdf, broadcast_command_handler, 
-# handle_broadcast, handle_broadcast_dry_run, start_form, get_name, get_debt, get_income)
-
-# Я привожу полный код файла для соблюдения нашего правила,
-# но реальные изменения находятся только в функции get_region.
+from .google_sheets import export_to_google_sheets # <-- НОВЫЙ ИМПОРТ
 
 LAST_PDF_FILE_ID = None
 
@@ -182,6 +174,28 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_broadcast_dry_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await broadcast_command_handler(update, context, dry_run=True)
+    
+async def handle_export_leads(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обрабатывает команду экспорта лидов в Google Sheets."""
+    if str(update.effective_user.id) != MANAGER_CHAT_ID:
+        await update.message.reply_text("У вас нет прав для выполнения этой команды.")
+        return
+
+    await update.message.reply_text("Начинаю экспорт данных в Google Таблицу... Это может занять до минуты.")
+    
+    try:
+        # Запускаем экспорт в фоновом потоке, чтобы не блокировать бота
+        loop = asyncio.get_running_loop()
+        if len(context.args) == 2:
+            start_date, end_date = context.args
+            result_message = await loop.run_in_executor(None, export_to_google_sheets, start_date, end_date)
+        else:
+            result_message = await loop.run_in_executor(None, export_to_google_sheets)
+            
+        await update.message.reply_text(result_message)
+    except Exception as e:
+        logger.error(f"Критическая ошибка при экспорте в Google Sheets: {e}")
+        await update.message.reply_text("Произошла серьезная ошибка во время экспорта. Пожалуйста, проверьте логи.")
 
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Отлично! Приступаем к заполнению анкеты.\n\nКак я могу к вам обращаться?", reply_markup=cancel_keyboard)
@@ -203,15 +217,10 @@ async def get_income(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return GET_REGION
 
 async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Последний шаг анкеты. Сохраняет данные и опционально отправляет лид-магнит.
-    """
     context.user_data['region'] = update.message.text
     user = update.effective_user
     user_info = context.user_data
     save_lead_to_db(user_id=user.id, lead_data=user_info)
-    
-    # Отправляем уведомление менеджеру
     summary_for_manager = (
         f"<b>✅ Новая анкета от @{user.username} (ID: {user.id})</b>\n\n"
         f"<b>Имя:</b> {user_info.get('name', '-')}\n"
@@ -220,11 +229,7 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"<b>Регион:</b> {user_info.get('region', '-')}"
     )
     await send_notification_to_manager(context, summary_for_manager)
-    
-    # Отправляем пользователю сообщение о завершении
     await update.message.reply_text("Спасибо за ваши ответы! Наши специалисты скоро свяжутся с вами.", reply_markup=main_keyboard)
-    
-    # --- НАЧАЛО НОВОЙ ЛОГИКИ ЛИД-МАГНИТА ---
     if LEAD_MAGNET_ENABLED and LEAD_MAGNET_FILE_ID:
         try:
             logger.info(f"Отправка лид-магнита (File ID: {LEAD_MAGNET_FILE_ID}) пользователю {user.id}")
@@ -235,8 +240,6 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
         except Exception as e:
             logger.error(f"Не удалось отправить автоматический лид-магнит пользователю {user.id}: {e}")
-    # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
-            
     context.user_data.clear()
     return ConversationHandler.END
 

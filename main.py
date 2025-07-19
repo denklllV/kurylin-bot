@@ -17,8 +17,9 @@ from src.handlers import (
     contact_human,
     handle_broadcast,
     handle_broadcast_dry_run,
-    handle_admin_document,  # <-- НОВЫЙ ИМПОРТ
-    handle_broadcast_pdf,   # <-- НОВЫЙ ИМПОРТ
+    handle_admin_document,
+    handle_broadcast_pdf,
+    handle_export_leads, # <-- НОВЫЙ ИМПОРТ
 )
 
 def main() -> None:
@@ -45,7 +46,8 @@ def main() -> None:
     # Регистрируем административные команды
     application.add_handler(CommandHandler("broadcast", handle_broadcast))
     application.add_handler(CommandHandler("broadcast_dry_run", handle_broadcast_dry_run))
-    application.add_handler(CommandHandler("broadcast_pdf", handle_broadcast_pdf)) # <-- НОВАЯ КОМАНДА
+    application.add_handler(CommandHandler("broadcast_pdf", handle_broadcast_pdf))
+    application.add_handler(CommandHandler("export_leads", handle_export_leads)) # <-- НОВАЯ КОМАНДА
 
     # Регистрируем команды и кнопки для обычных пользователей
     application.add_handler(CommandHandler("whoami", whoami))
@@ -54,7 +56,7 @@ def main() -> None:
     application.add_handler(MessageHandler(contact_button_filter, contact_human))
     
     # Регистрируем обработчик для документов от администратора
-    application.add_handler(MessageHandler(filters.Document.ALL, handle_admin_document)) # <-- НОВЫЙ ОБРАБОТЧИК
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_admin_document))
     
     # Регистрируем обработчик голосовых
     application.add_handler(MessageHandler(filters.VOICE, handle_voice_message))
