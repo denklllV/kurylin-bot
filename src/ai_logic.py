@@ -133,7 +133,12 @@ def transcribe_voice(voice_path: str) -> str | None:
     """Отправляет аудиофайл в HuggingFace Inference API для транскрибации."""
     logger.info(f"Отправка файла {voice_path} в HuggingFace API...")
     try:
-        headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+        # <--- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+        headers = {
+            "Authorization": f"Bearer {HUGGINGFACE_API_KEY}",
+            "Content-Type": "audio/mpeg"
+        }
+        # <--- КОНЕЦ ИЗМЕНЕНИЯ ---
         with open(voice_path, "rb") as f:
             data = f.read()
         response = requests.post(STT_API_URL, headers=headers, data=data)
