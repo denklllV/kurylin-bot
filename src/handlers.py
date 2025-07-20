@@ -49,23 +49,22 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     """
     user_question = text_override or update.message.text
     
-    # Показываем пользователю индикатор "печатает...", если ответ не из быстрого FAQ
     await update.message.reply_chat_action(ChatAction.TYPING)
 
     loop = asyncio.get_running_loop()
-    # Просто вызываем нашу главную функцию-конвейер
     final_answer = await loop.run_in_executor(None, get_ai_response, user_question)
     
-    # Убираем лишние теги, если они есть
     cleaned_answer = final_answer.replace('<p>', '').replace('</p>', '')
     while '\n\n\n' in cleaned_answer:
         cleaned_answer = cleaned_answer.replace('\n\n\n', '\n\n')
             
     try:
-        await update.message.reply_text(cleaned_answer, parse_mode=ParseMode.HTML, reply_markup=main_keyboard, disable_web_page_preview=False)
+        # Убеждаемся, что parse_mode=ParseMode.HTML здесь установлен
+        await update.message.reply_text(cleaned_answer, parse_mode=ParseMode.HTML, reply_markup=main_keyboard)
     except Exception as e:
         logger.error(f"Ошибка форматирования HTML: {e}. Отправка без форматирования.")
-        await update.message.reply_text(cleaned_answer, reply_markup=main_keyboard, disable_web_page_preview=False)
+        # В случае ошибки отправляем как простой текст
+        await update.message.reply_text(cleaned_answer, reply_markup=main_keyboard)
 
 # ... (остальной код файла остается без изменений) ...
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
