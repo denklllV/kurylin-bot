@@ -27,7 +27,9 @@ PORT = int(os.environ.get('PORT', 8443))
 # --- Настройки моделей AI ---
 MODEL_NAME = "tngtech/deepseek-r1t2-chimera:free" 
 STT_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
-EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2" # <-- НОВАЯ ПЕРЕМЕННАЯ
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2" 
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 # --- Состояния ConversationHandler ---
 GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(4)

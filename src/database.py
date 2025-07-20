@@ -47,3 +47,21 @@ def get_lead_user_ids() -> list:
     except Exception as e:
         logger.error(f"Критическая ошибка при получении списка лидов из Supabase: {e}")
         return []
+
+def find_similar_chunks(embedding: list[float], match_threshold: float = 0.7, match_count: int = 3) -> list[dict]:
+    """
+    Ищет наиболее релевантные фрагменты текста в базе знаний с помощью векторного поиска.
+    """
+    if not embedding:
+        return []
+    try:
+        response = supabase.rpc('match_documents', {
+            'query_embedding': embedding,
+            'match_threshold': match_threshold,
+            'match_count': match_count
+        }).execute()
+        logger.info(f"Векторный поиск вернул {len(response.data)} фрагмент(ов).")
+        return response.data
+    except Exception as e:
+        logger.error(f"Ошибка при выполнении векторного поиска в Supabase: {e}")
+        return []
