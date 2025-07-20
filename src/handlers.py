@@ -1,6 +1,7 @@
 # src/handlers.py
 import asyncio
 import os
+import re # <-- НОВЫЙ ИМПОРТ
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
@@ -59,12 +60,16 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         cleaned_answer = cleaned_answer.replace('\n\n\n', '\n\n')
             
     try:
-        # Убеждаемся, что parse_mode=ParseMode.HTML здесь установлен
+        # Пытаемся отправить с HTML-форматированием
         await update.message.reply_text(cleaned_answer, parse_mode=ParseMode.HTML, reply_markup=main_keyboard)
     except Exception as e:
+        # --- УЛУЧШЕННАЯ ОБРАБОТКА ОШИБОК ---
         logger.error(f"Ошибка форматирования HTML: {e}. Отправка без форматирования.")
-        # В случае ошибки отправляем как простой текст
-        await update.message.reply_text(cleaned_answer, reply_markup=main_keyboard)
+        # В случае ошибки удаляем ВСЕ HTML-теги и отправляем как простой текст
+        plain_text = re.sub('<[^<]+?>', '', cleaned_answer)
+        await update.message.reply_text(plain_text, reply_markup=main_keyboard)
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
 
 # ... (остальной код файла остается без изменений) ...
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
