@@ -35,8 +35,9 @@ GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(4)
 LEAD_MAGNET_ENABLED = os.getenv('LEAD_MAGNET_ENABLED', 'False').lower() in ('true', '1', 't')
 LEAD_MAGNET_FILE_ID = os.getenv('LEAD_MAGNET_FILE_ID')
 
-# --- Новая переменная для Google Sheets ---
+# --- Настройки Google Sheets ---
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
+GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON') # <-- НОВАЯ ПЕРЕМЕННАЯ
 
 # --- База знаний ---
 KNOWLEDGE_BASE = ""
