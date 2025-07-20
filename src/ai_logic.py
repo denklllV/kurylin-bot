@@ -1,63 +1,114 @@
 # src/ai_logic.py
 import json
 import requests
-import os
 from openai import OpenAI
-from sentence_transformers import SentenceTransformer
-from .config import OPENROUTER_API_KEY, MODEL_NAME, HUGGINGFACE_API_KEY, STT_API_URL, EMBEDDING_MODEL_NAME, logger
-from .database import find_similar_chunks
+from .config import OPENROUTER_API_KEY, MODEL_NAME, HUGGINGFACE_API_KEY, STT_API_URL, logger
 
-# Указываем путь для кэша внутри нашей рабочей директории
-CACHE_DIR = "/app/cache"
-os.makedirs(CACHE_DIR, exist_ok=True)
-
-# --- Инициализация клиентов и моделей при старте ---
+# --- Клиенты API ---
 client_openrouter = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY
 )
 
-logger.info(f"Загрузка модели эмбеддингов: {EMBEDDING_MODEL_NAME}...")
-embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, device='cpu', cache_folder=CACHE_DIR)
-logger.info("Модель эмбеддингов успешно загружена.")
-# --- Конец блока инициализации ---
+# --- Загрузка структурированной базы знаний ---
+def load_json_db(file_path: str):
+    """Надежно загружает JSON-файл, обрабатывая возможные ошибки."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        logger.warning(f"Файл базы знаний {file_path} не найден или содержит ошибку. Связанный функционал будет отключен.")
+        return []
 
+FAQ_DB = load_json_db('data/faq.json')
+INTERVIEWS_DB = load_json_db('data/interviews.json')
+
+# --- Логика поиска в базе знаний (Старая, легковесная версия) ---
+
+def find_faq_answer(question: str) -> str | None:
+    """Ищет точный ответ в базе FAQ по ключевым словам."""
+    if not FAQ_DB: return None
+    
+    question_words = set(question.lower().split())
+    best_match_score = 0
+    best_answer = None
+
+    for item in FAQ_DB:
+        keywords = set(item.get('keywords', []))
+        # Используем более точный скоринг: отношение найденных слов к общему числу ключевых слов
+        score = len(question_words.intersection(keywords)) / len(keywords) if keywords else 0
+        if score > best_match_score:
+            best_match_score = score
+            best_answer = item.get('answer')
+
+    # Считаем совпадение успешным, если найдено более 40% ключевых слов
+    if best_match_score > 0.4:
+        logger.info(f"Найден быстрый ответ в FAQ (score: {best_match_score:.2f}). Экономим токены.")
+        return best_answer
+    
+    return None
+
+def find_relevant_quote(question: str) -> dict | None:
+    """Ищет наиболее подходящую цитату из интервью по ключевым словам."""
+    if not INTERVIEWS_DB: return None
+    
+    question_words = set(question.lower().split())
+    best_match_score = 0
+    best_quote_item = None
+
+    for item in INTERVIEWS_DB:
+        keywords = set(item.get('keywords', []))
+        score = len(question_words.intersection(keywords))
+        if score > best_match_score:
+            best_match_score = score
+            best_quote_item = item
+            
+    # Возвращаем цитату, даже если найдено всего 2 ключевых слова
+    if best_match_score >= 2:
+        logger.info(f"Найдена релевантная цитата для контекста (score: {best_match_score}).")
+        return best_quote_item
+        
+    return None
+
+# --- НОВЫЙ ГИБРИДНЫЙ КОНВЕЙЕР ОТВЕТА ---
 
 def get_ai_response(question: str) -> str:
     """
-    Основная функция генерации ответа с использованием семантического поиска.
+    Основная функция, реализующая гибридную логику ответа.
     """
-    # Шаг 1: Векторизуем вопрос пользователя
-    question_embedding = embedding_model.encode(question).tolist()
+    # Шаг 1: Попробовать найти прямой ответ в FAQ для экономии.
+    faq_answer = find_faq_answer(question)
+    if faq_answer:
+        return faq_answer
+
+    # Шаг 2: Если в FAQ нет, найти релевантную цитату из интервью.
+    # Она будет служить и контекстом, и примером стиля.
+    quote_item = find_relevant_quote(question)
     
-    # Шаг 2: Ищем релевантные фрагменты в базе знаний
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-    similar_chunks = find_similar_chunks(question_embedding, match_threshold=0.5)
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
-    
-    # Шаг 3: Готовим контекст и системный промпт для LLM
-    context = "Контекста не найдено."
-    if similar_chunks:
-        context_parts = [chunk['content'] for chunk in similar_chunks]
-        context = "\n\n---\n\n".join(context_parts)
+    # Шаг 3: Готовим контекст и системный промпт для AI.
+    context = ""
+    if quote_item:
+        context = f"Контекст для ответа (используй эти факты и стиль): «{quote_item.get('quote', '')}»"
+    else:
+        # Если даже цитата не найдена, идем к LLM с пустым контекстом
+        logger.info("Ничего не найдено в локальной базе знаний. Обращаюсь к LLM напрямую.")
+        context = "Контекста не найдено."
 
     system_prompt = (
         "Твоя роль — первоклассный юрист-консультант по банкротству, твое имя — Вячеслав Курилин. "
-        "Твоя речь — человечная, мягкая, эмпатичная и уверенная. Ты всегда на стороне клиента. "
-        "Твоя задача — дать четкий и полезный ответ на вопрос клиента, основываясь **исключительно** на предоставленном ниже контексте."
+        "Твоя речь — человечная, мягкая, эмпатичная и уверенная, как в предоставленном контексте. Твоя задача — ответить на вопрос клиента."
         
-        "**СТРОГИЕ ПРАВИЛА ТВОЕЙ ЛИЧНОСТИ И ПОВЕДЕНИЯ:**\n"
-        "1. **Никогда не выдумывай информацию.** Твой ответ должен быть прямым пересказом или обобщением фактов из контекста. Не добавляй ничего от себя.\n"
-        "2. **Если контекст нерелевантен вопросу** или недостаточен для ответа, вежливо сообщи, что специализируешься только на вопросах банкротства физических лиц в РФ и не можешь ответить на этот вопрос.\n"
-        "3. **Никогда не упоминай** слова 'контекст', 'база знаний', 'AI', 'модель' или 'источник'. Отвечай так, будто эта информация — твои собственные экспертные знания.\n"
-        "4. **Никогда не представляйся**, если тебя не спросили напрямую. Сразу переходи к сути ответа.\n"
-        "5. **Краткость и ясность:** Твой ответ должен быть очень коротким, в идеале 1-2 абзаца. Избегай канцеляризмов и воды.\n"
-        "6. **Используй HTML-теги** для форматирования: <b>...</b> для жирного, <i>...</i> для курсива, если это уместно."
+        "**СТРОГИЕ ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:**\n"
+        "1. **Если предоставлен контекст:** Твой ответ должен быть основан на фактах из этого контекста. Перескажи их суть своими словами, сохраняя экспертный, но человечный стиль, как в примере.\n"
+        "2. **Если контекста нет ('Контекста не найдено'):** Дай общий, полезный ответ по теме банкротства, основываясь на своих общих знаниях. Будь краток.\n"
+        "3. **Если вопрос не по теме банкротства/долгов:** Вежливо сообщи, что специализируешься только на этих вопросах.\n"
+        "4. **Никогда не упоминай** слова 'контекст', 'база знаний' или 'цитата'.\n"
+        "5. **Никогда не представляйся**, если не спросили напрямую. Сразу переходи к сути.\n"
+        "6. **Используй HTML-теги** для форматирования: <b>...</b> для жирного, <i>...</i> для курсива."
     )
     
-    user_prompt = f"Контекст:\n{context}\n\nВопрос клиента: {question}\n\nОтвет:"
+    user_prompt = f"{context}\n\nВопрос клиента: {question}"
 
-    logger.info("Контекст найден, обращаюсь к AI-модели для генерации ответа...")
     try:
         completion = client_openrouter.chat.completions.create(
             model=MODEL_NAME,
@@ -65,10 +116,19 @@ def get_ai_response(question: str) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            max_tokens=500,
-            temperature=0.4 # Снижаем температуру для более строгого следования контексту
+            max_tokens=600, # Немного увеличим для более полных ответов
+            temperature=0.7 # Вернем температуру для более "живой" речи
         )
         ai_answer = completion.choices[0].message.content
+        
+        # Если мы использовали цитату, добавляем к ответу красивую ссылку на источник
+        if quote_item:
+            source_name = quote_item.get('source_name')
+            source_url = quote_item.get('source_url')
+            if source_name and source_url:
+                citation = f'\n\n<i>Источник: <a href="{source_url}">{source_name}</a></i>'
+                ai_answer += citation
+
         return ai_answer
         
     except Exception as e:
