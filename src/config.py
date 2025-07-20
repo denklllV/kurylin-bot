@@ -27,6 +27,7 @@ PORT = int(os.environ.get('PORT', 8443))
 # --- Настройки моделей AI ---
 MODEL_NAME = "tngtech/deepseek-r1t2-chimera:free" 
 STT_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
+EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2" # <-- НОВАЯ ПЕРЕМЕННАЯ
 
 # --- Состояния ConversationHandler ---
 GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(4)
@@ -37,7 +38,7 @@ LEAD_MAGNET_FILE_ID = os.getenv('LEAD_MAGNET_FILE_ID')
 
 # --- Настройки Google Sheets ---
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
-GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON') # <-- НОВАЯ ПЕРЕМЕННАЯ
+GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 
 # --- База знаний ---
 KNOWLEDGE_BASE = ""
