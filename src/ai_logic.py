@@ -1,17 +1,15 @@
 # src/ai_logic.py
 import json
 import requests
-import os # <-- НОВЫЙ ИМПОРТ
+import os
 from openai import OpenAI
 from sentence_transformers import SentenceTransformer
 from .config import OPENROUTER_API_KEY, MODEL_NAME, HUGGINGFACE_API_KEY, STT_API_URL, EMBEDDING_MODEL_NAME, logger
 from .database import find_similar_chunks
 
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
 # Указываем путь для кэша внутри нашей рабочей директории
 CACHE_DIR = "/app/cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 # --- Инициализация клиентов и моделей при старте ---
 client_openrouter = OpenAI(
@@ -20,9 +18,7 @@ client_openrouter = OpenAI(
 )
 
 logger.info(f"Загрузка модели эмбеддингов: {EMBEDDING_MODEL_NAME}...")
-# --- ИЗМЕНЕНИЕ ЗДЕСЯ ---
 embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, device='cpu', cache_folder=CACHE_DIR)
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
 logger.info("Модель эмбеддингов успешно загружена.")
 # --- Конец блока инициализации ---
 
@@ -35,7 +31,9 @@ def get_ai_response(question: str) -> str:
     question_embedding = embedding_model.encode(question).tolist()
     
     # Шаг 2: Ищем релевантные фрагменты в базе знаний
-    similar_chunks = find_similar_chunks(question_embedding)
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    similar_chunks = find_similar_chunks(question_embedding, match_threshold=0.5)
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
     
     # Шаг 3: Готовим контекст и системный промпт для LLM
     context = "Контекста не найдено."
