@@ -25,10 +25,9 @@ WEBHOOK_URL = f"https://{RENDER_SERVICE_NAME}.onrender.com/{TELEGRAM_TOKEN}"
 PORT = int(os.environ.get('PORT', 8443))
 
 # --- Настройки моделей AI ---
-MODEL_NAME = "tngtech/deepseek-r1t2-chimera:free" 
+# --- ИЗМЕНЕНИЕ ЗДЕСЬ: ОБНОВЛЯЕМ ДО АКТУАЛЬНОЙ МОДЕЛИ ---
+MODEL_NAME = "cognitivecomputations/dolphin3.0-r1-mistral-24b:free" 
 STT_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3"
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ: ПРАВИЛЬНАЯ МНОГОЯЗЫЧНАЯ МОДЕЛЬ ---
-EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-small" 
 
 # --- Состояния ConversationHandler ---
 GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(4)
