@@ -1,6 +1,7 @@
 # src/ai_logic.py
 import json
 import requests
+import pymorphy2
 from openai import OpenAI
 from .config import OPENROUTER_API_KEY, MODEL_NAME, HUGGINGFACE_API_KEY, STT_API_URL, logger
 
@@ -9,6 +10,9 @@ client_openrouter = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY
 )
+
+# --- Инициализация морфологического анализатора ---
+morph = pymorphy2.MorphAnalyzer()
 
 # --- Загрузка структурированной базы знаний ---
 def load_json_db(file_path: str):
@@ -25,19 +29,31 @@ INTERVIEWS_DB = load_json_db('data/interviews.json')
 
 # --- Логика поиска в базе знаний ---
 
+def normalize_text(text: str) -> set:
+    """
+    Принимает текст, разбивает на слова, приводит каждое слово
+    к нормальной форме и возвращает множество уникальных нормальных форм.
+    """
+    words = text.lower().split()
+    normalized_words = {morph.parse(word)[0].normal_form for word in words}
+    return normalized_words
+
 def find_faq_answer(question: str) -> str | None:
-    """Ищет точный ответ в базе FAQ по ключевым словам."""
+    """Ищет точный ответ в базе FAQ по ключевым словам с использованием морфологического анализа."""
     if not FAQ_DB: return None
     
-    question_words = set(question.lower().split())
+    question_words_normalized = normalize_text(question)
     best_match_score = 0
     best_answer = None
 
     for item in FAQ_DB:
-        keywords = set(item.get('keywords', []))
-        if not keywords: continue
+        # Ключевые слова уже в виде списка, объединим их в строку для нормализации
+        keywords_text = " ".join(item.get('keywords', []))
+        if not keywords_text: continue
+
+        keywords_normalized = normalize_text(keywords_text)
         
-        score = len(question_words.intersection(keywords))
+        score = len(question_words_normalized.intersection(keywords_normalized))
         if score > best_match_score:
             best_match_score = score
             best_answer = item.get('answer')
@@ -50,18 +66,21 @@ def find_faq_answer(question: str) -> str | None:
     return None
 
 def find_relevant_quote(question: str) -> dict | None:
-    """Ищет наиболее подходящую цитату из интервью по ключевым словам."""
+    """Ищет наиболее подходящую цитату из интервью по ключевым словам с использованием морфологического анализа."""
     if not INTERVIEWS_DB: return None
     
-    question_words = set(question.lower().split())
+    question_words_normalized = normalize_text(question)
     best_match_score = 0
     best_quote_item = None
 
     for item in INTERVIEWS_DB:
-        keywords = set(item.get('keywords', []))
-        if not keywords: continue
+        # Ключевые слова уже в виде списка, объединим их в строку для нормализации
+        keywords_text = " ".join(item.get('keywords', []))
+        if not keywords_text: continue
+
+        keywords_normalized = normalize_text(keywords_text)
             
-        score = len(question_words.intersection(keywords))
+        score = len(question_words_normalized.intersection(keywords_normalized))
         if score > best_match_score:
             best_match_score = score
             best_quote_item = item
