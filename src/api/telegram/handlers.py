@@ -1,5 +1,6 @@
-import os
-import io # ИСПРАВЛЕНИЕ: Импортируем io
+# START OF FILE: src/api/telegram/handlers.py
+
+import io
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
@@ -7,17 +8,14 @@ from pydub import AudioSegment
 
 from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
-from src.infra.clients.supabase_repo import SupabaseRepo
 from src.domain.models import User, Message
 from src.api.telegram.keyboards import main_keyboard, cancel_keyboard
 from src.shared.logger import logger
 from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION, MANAGER_CHAT_ID
 
-# Инициализация здесь - временное решение для простоты.
-# В будущем это будет делаться в main.py через DI (Dependency Injection).
-supabase_repo = SupabaseRepo()
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Теперь сервисы передаются через context, поэтому repo здесь не нужен
+    lead_service: LeadService = context.bot_data['lead_service']
     user_data = update.effective_user
     utm_source = context.args[0] if context.args else None
     
@@ -27,7 +25,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         first_name=user_data.first_name,
         utm_source=utm_source
     )
-    supabase_repo.save_user(user)
+    # Используем repo через сервис, но здесь это просто сохранение пользователя
+    lead_service.repo.save_user(user)
 
     await update.message.reply_text(
         'Здравствуйте! Я ваш юридический AI-ассистент.\n\n'
@@ -41,12 +40,13 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     user_question = update.message.text
     
-    supabase_repo.save_message(user_id, Message(role='user', content=user_question))
+    ai_service.repo.save_message(user_id, Message(role='user', content=user_question))
     await update.message.reply_chat_action(ChatAction.TYPING)
 
-    response_text = ai_service.get_text_response(user_question)
+    # ИЗМЕНЕНИЕ: Передаем user_id для получения истории
+    response_text = ai_service.get_text_response(user_id, user_question)
     
-    supabase_repo.save_message(user_id, Message(role='assistant', content=response_text))
+    ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text))
     await update.message.reply_text(response_text, parse_mode=ParseMode.HTML, reply_markup=main_keyboard)
 
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -59,7 +59,6 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     voice = update.message.voice
     voice_file = await voice.get_file()
     
-    # ИСПРАВЛЕНИЕ: Скачиваем байты и "заворачиваем" их в BytesIO
     voice_bytes = await voice_file.download_as_bytearray()
     ogg_audio = AudioSegment.from_file(io.BytesIO(voice_bytes))
     
@@ -70,12 +69,13 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if transcribed_text:
         await update.message.reply_text(f"Ваш вопрос: «{transcribed_text}»\n\nИщу ответ...")
         
-        supabase_repo.save_message(user_id, Message(role='user', content=transcribed_text))
+        ai_service.repo.save_message(user_id, Message(role='user', content=transcribed_text))
         await update.message.reply_chat_action(ChatAction.TYPING)
         
-        response_text = ai_service.get_text_response(transcribed_text)
+        # ИЗМЕНЕНИЕ: Передаем user_id для получения истории
+        response_text = ai_service.get_text_response(user_id, transcribed_text)
 
-        supabase_repo.save_message(user_id, Message(role='assistant', content=response_text))
+        ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text))
         await update.message.reply_text(response_text, parse_mode=ParseMode.HTML, reply_markup=main_keyboard)
     else:
         await update.message.reply_text("К сожалению, не удалось распознать речь. Попробуйте записать снова или напишите вопрос текстом.")
@@ -120,7 +120,6 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['region'] = update.message.text
     
     user = User(id=user_data.id, username=user_data.username, first_name=user_data.first_name)
-    # Используем await, так как save_lead теперь может быть асинхронным
     await lead_service.save_lead(user, context.user_data)
 
     await update.message.reply_text("Спасибо за ваши ответы! Наши специалисты скоро свяжутся с вами.", reply_markup=main_keyboard)

@@ -3,23 +3,21 @@
 import sys
 import os
 
-# Добавляем корень проекта в путь Python
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
 
-# Импортируем все необходимое из новой структуры
 from src.shared.logger import logger
 from src.shared.config import TELEGRAM_TOKEN, PORT, PUBLIC_APP_URL, RUN_MODE, GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 
-# Импортируем клиентов и сервисы
+# Импортируем всех наших "рабочих"
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
+from src.infra.clients.hf_embed_client import EmbeddingClient # <-- НОВЫЙ ИМПОРТ
 from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
 
-# Импортируем хендлеры
 from src.api.telegram import handlers
 
 def main() -> None:
@@ -30,16 +28,16 @@ def main() -> None:
     supabase_repo = SupabaseRepo()
     or_client = OpenRouterClient()
     whisper_client = WhisperClient()
-    
+    embed_client = EmbeddingClient() # <-- СОЗДАЕМ КЛИЕНТ ЭМБЕДДИНГОВ
+
     # 2. Сборка приложения Telegram
-    # ИСПРАВЛЕНИЕ ЗДЕСЬ: Сначала строим приложение, потом добавляем bot_data
     builder = Application.builder().token(TELEGRAM_TOKEN)
     application = builder.build()
     
     # 3. Передаем инстансы сервисов в bot_data
-    # Это единственный правильный способ передать зависимости в хендлеры
-    ai_service = AIService(or_client, whisper_client)
-    lead_service = LeadService(supabase_repo, application.bot) # Теперь мы используем application.bot
+    # ИЗМЕНЕНИЕ: AIService теперь тоже зависит от repo
+    ai_service = AIService(or_client, whisper_client, embed_client, supabase_repo)
+    lead_service = LeadService(supabase_repo, application.bot)
     
     application.bot_data['ai_service'] = ai_service
     application.bot_data['lead_service'] = lead_service
@@ -65,7 +63,6 @@ def main() -> None:
     application.add_handler(MessageHandler(contact_button_filter, handlers.contact_human))
     application.add_handler(MessageHandler(filters.VOICE, handlers.handle_voice_message))
     
-    # Важно, чтобы этот обработчик был одним из последних, т.к. он ловит "любой" текст
     text_filter = filters.TEXT & ~filters.COMMAND & ~form_button_filter & ~contact_button_filter
     application.add_handler(MessageHandler(text_filter, handlers.handle_text_message))
 
