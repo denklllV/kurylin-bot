@@ -24,6 +24,10 @@ STT_API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-
 # --- Deployment & Runtime ---
 RENDER_SERVICE_NAME = os.getenv('RENDER_SERVICE_NAME')
 PUBLIC_APP_URL = f"https://{RENDER_SERVICE_NAME}.onrender.com" if RENDER_SERVICE_NAME else "http://localhost"
+
+# ИСПРАВЛЕНИЕ ЗДЕСЬ: Возвращаем WEBHOOK_URL, который используется в main.py
+WEBHOOK_URL = f"{PUBLIC_APP_URL}/{TELEGRAM_TOKEN}"
+
 PORT = int(os.environ.get('PORT', 8443))
 RUN_MODE = os.getenv('RUN_MODE', 'WEBHOOK') # WEBHOOK для Render, POLLING для локального теста
 
