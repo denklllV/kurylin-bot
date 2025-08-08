@@ -1,6 +1,5 @@
-# START OF FILE: src/api/telegram/handlers.py
-
 import os
+import io # ИСПРАВЛЕНИЕ: Импортируем io
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
@@ -14,8 +13,8 @@ from src.api.telegram.keyboards import main_keyboard, cancel_keyboard
 from src.shared.logger import logger
 from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION, MANAGER_CHAT_ID
 
-# --- Инициализация сервисов (в реальном приложении это будет делаться в main.py через DI) ---
-# Для простоты рефакторинга пока создаем их здесь.
+# Инициализация здесь - временное решение для простоты.
+# В будущем это будет делаться в main.py через DI (Dependency Injection).
 supabase_repo = SupabaseRepo()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -60,8 +59,10 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     voice = update.message.voice
     voice_file = await voice.get_file()
     
-    # Конвертация в MP3 в памяти
-    ogg_audio = AudioSegment.from_file(await voice_file.download_as_bytearray())
+    # ИСПРАВЛЕНИЕ: Скачиваем байты и "заворачиваем" их в BytesIO
+    voice_bytes = await voice_file.download_as_bytearray()
+    ogg_audio = AudioSegment.from_file(io.BytesIO(voice_bytes))
+    
     mp3_data = ogg_audio.export(format="mp3").read()
 
     transcribed_text = ai_service.transcribe_voice(mp3_data)
@@ -119,6 +120,7 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['region'] = update.message.text
     
     user = User(id=user_data.id, username=user_data.username, first_name=user_data.first_name)
+    # Используем await, так как save_lead теперь может быть асинхронным
     await lead_service.save_lead(user, context.user_data)
 
     await update.message.reply_text("Спасибо за ваши ответы! Наши специалисты скоро свяжутся с вами.", reply_markup=main_keyboard)
