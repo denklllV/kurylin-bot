@@ -8,9 +8,10 @@ from src.shared.logger import logger
 from src.shared.config import HF_API_KEY
 
 class EmbeddingClient:
-    # ИЗМЕНЕНИЕ: Меняем модель на совместимую с Inference API
+    # Оставляем эту модель, так как она хорошая, но меняем способ обращения к ней
     def __init__(self, model_name: str = 'intfloat/multilingual-e5-small'):
-        self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_name}"
+        # ИСПРАВЛЕНИЕ: Используем прямой эндпоинт модели, а не пайплайн
+        self.api_url = f"https://api-inference.huggingface.co/models/{model_name}"
         self.headers = {"Authorization": f"Bearer {HF_API_KEY}"}
         logger.info(f"EmbeddingClient initialized for API model: {model_name}")
 
@@ -21,19 +22,19 @@ class EmbeddingClient:
             return None
         
         try:
-            # Модели e5 требуют добавления "query: " для поисковых запросов
+            # Модели e5 требуют добавления "query: "
             input_text = "query: " + text.replace("\n", " ")
             
             response = requests.post(
                 self.api_url,
                 headers=self.headers,
-                json={"inputs": input_text, "options": {"wait_for_model": True}}
+                json={"inputs": input_text} # Упрощаем тело запроса
             )
             response.raise_for_status()
             
-            # Ответ приходит в виде вложенного списка, извлекаем первый элемент
             embedding_list = response.json()
-            if isinstance(embedding_list, list) and embedding_list:
+            # Ответ от прямого эндпоинта имеет другую структуру
+            if isinstance(embedding_list, list) and embedding_list and isinstance(embedding_list[0], list):
                 embedding = embedding_list[0]
                 if isinstance(embedding, list) and all(isinstance(i, float) for i in embedding):
                     return embedding
