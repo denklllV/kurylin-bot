@@ -2,20 +2,30 @@
 
 from typing import List
 
+# Импортируем все необходимые клиенты и модели
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
+from src.infra.clients.hf_embed_client import EmbeddingClient
+from src.infra.clients.supabase_repo import SupabaseRepo
 from src.domain.models import Message
 from src.shared.logger import logger
 
 class AIService:
-    def __init__(self, or_client: OpenRouterClient, whisper_client: WhisperClient):
+    def __init__(
+        self,
+        or_client: OpenRouterClient,
+        whisper_client: WhisperClient,
+        embed_client: EmbeddingClient,
+        repo: SupabaseRepo
+    ):
         self.or_client = or_client
         self.whisper_client = whisper_client
+        self.embed_client = embed_client
+        self.repo = repo
         self.system_prompt = self._load_system_prompt()
-        logger.info("AIService initialized.")
+        logger.info("AIService initialized with all dependencies.")
 
     def _load_system_prompt(self) -> str:
-        # В будущем этот промпт можно будет вынести в файл, как в вашей схеме
         return (
             "Ты — юрист-консультант по банкротству Вячеслав Курилин. Твоя речь — человечная, мягкая и уверенная. Твоя задача — помочь клиенту.\n\n"
             "**СТРОГИЕ ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:**\n"
@@ -26,13 +36,53 @@ class AIService:
             "5. **ЭТИКЕТ:** Никогда не представляйся. Никогда не упоминай слова 'контекст', 'база знаний', 'AI', 'модель'."
         )
 
-    def get_text_response(self, user_question: str) -> str:
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": user_question}
-        ]
-        # Пока мы не используем RAG или память, логика простая
-        response_text = self.or_client.get_chat_completion(messages)
+    def _build_rag_prompt(
+        self,
+        question: str,
+        history: List[Message],
+        rag_chunks: List[dict]
+    ) -> List[dict]:
+        """Собирает полный промпт для LLM с историей и RAG-контекстом."""
+        
+        messages = [{"role": "system", "content": self.system_prompt}]
+
+        # 1. Добавляем историю диалога (краткосрочную память)
+        if history:
+            history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
+            messages.append({"role": "system", "content": f"Вот предыдущая часть нашего разговора:\n{history_text}"})
+
+        # 2. Добавляем найденный RAG-контекст
+        if rag_chunks:
+            rag_context = "\n---\n".join([chunk.get('content', '') for chunk in rag_chunks])
+            user_prompt_text = (
+                "Используя приведённые ниже факты из моей базы знаний, ответь на вопрос клиента.\n"
+                "Твой ответ должен основываться в первую очередь на этих фактах.\n\n"
+                f"--- ФАКТЫ ---\n{rag_context}\n--- КОНЕЦ ФАКТОВ ---\n\n"
+                f"Вопрос клиента: «{question}»"
+            )
+        else:
+            # Если в базе знаний ничего не нашлось
+            user_prompt_text = f"Вопрос клиента: «{question}»"
+            
+        messages.append({"role": "user", "content": user_prompt_text})
+        return messages
+
+    def get_text_response(self, user_id: int, user_question: str) -> str:
+        # 1. Получаем краткосрочную память
+        history = self.repo.get_recent_messages(user_id)
+        
+        # 2. Получаем эмбеддинг вопроса
+        embedding = self.embed_client.get_embedding(user_question)
+        
+        # 3. Ищем релевантные чанки в базе знаний (RAG)
+        rag_chunks = []
+        if embedding:
+            rag_chunks = self.repo.find_similar_chunks(embedding)
+        
+        # 4. Строим промпт и получаем ответ от LLM
+        messages_to_send = self._build_rag_prompt(user_question, history, rag_chunks)
+        response_text = self.or_client.get_chat_completion(messages_to_send)
+        
         return response_text
 
     def transcribe_voice(self, audio_data: bytes) -> str | None:

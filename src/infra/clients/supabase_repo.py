@@ -10,11 +10,10 @@ from src.domain.models import User, Lead, Message
 class SupabaseRepo:
     def __init__(self):
         self.client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        logger.info("Supabase client initialized.")
+        logger.info("SupabaseRepo initialized.")
 
     def save_user(self, user: User):
         try:
-            # Upsert logic: insert or update if user exists
             self.client.table('users').upsert({
                 'user_id': user.id,
                 'username': user.username,
@@ -48,5 +47,36 @@ class SupabaseRepo:
             logger.info(f"Message from '{message.role}' for user {user_id} saved.")
         except Exception as e:
             logger.error(f"Error saving message for user {user_id}: {e}")
+
+    # --- НОВЫЙ МЕТОД ДЛЯ ПАМЯТИ ---
+    def get_recent_messages(self, user_id: int, limit: int = 4) -> List[Message]:
+        """Получает последние N сообщений для формирования краткосрочной памяти."""
+        try:
+            response = self.client.table('messages').select('role, content') \
+                .eq('user_id', user_id).order('created_at', desc=True).limit(limit).execute()
+            
+            # Преобразуем ответ в доменные модели и переворачиваем, чтобы порядок был хронологическим
+            messages = [Message(role=item['role'], content=item['content']) for item in response.data]
+            return list(reversed(messages))
+        except Exception as e:
+            logger.error(f"Error fetching recent messages for user {user_id}: {e}")
+            return []
+            
+    # --- МЕТОД ДЛЯ RAG ---
+    def find_similar_chunks(self, embedding: List[float], match_threshold: float = 0.5, match_count: int = 3) -> List[dict]:
+        """Ищет релевантные фрагменты в базе знаний через векторный поиск."""
+        if not embedding:
+            return []
+        try:
+            response = self.client.rpc('match_documents', {
+                'query_embedding': embedding,
+                'match_threshold': match_threshold,
+                'match_count': match_count
+            }).execute()
+            logger.info(f"Vector search returned {len(response.data)} chunk(s).")
+            return response.data
+        except Exception as e:
+            logger.error(f"Error during vector search RPC call: {e}")
+            return []
 
 # END OF FILE: src/infra/clients/supabase_repo.py
