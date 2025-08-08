@@ -8,11 +8,19 @@ from src.shared.config import HF_API_KEY, STT_API_URL
 class WhisperClient:
     def __init__(self):
         self.api_url = STT_API_URL
-        # ИСПРАВЛЕНИЕ: Формируем заголовки один раз при инициализации
+        
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Добавляем диагностику ключа ---
+        if HF_API_KEY and len(HF_API_KEY) > 10:
+            # Логируем, что ключ получен, его тип и длину, но не сам ключ
+            logger.info(f"DIAGNOSTICS: HF_API_KEY loaded. Type: {type(HF_API_KEY)}, Length: {len(HF_API_KEY)}.")
+        else:
+            # Если ключ пустой или слишком короткий, бьем тревогу
+            logger.error("DIAGNOSTICS: HF_API_KEY is missing, empty, or invalid!")
+
         self.headers = {
             "Authorization": f"Bearer {HF_API_KEY}",
             "Accept": "application/json",
-            "Content-Type": "audio/mp3" # Явно указываем, что отправляем MP3
+            "Content-Type": "audio/mp3"
         }
         logger.info("WhisperClient initialized with explicit headers.")
 
@@ -38,7 +46,6 @@ class WhisperClient:
                 return None
 
         except requests.exceptions.HTTPError as e:
-            # Логируем тело ответа, если это ошибка HTTP
             logger.error(f"HTTP Error during transcription request: {e}. Response body: {e.response.text}")
             return None
         except Exception as e:
