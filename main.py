@@ -10,11 +10,10 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from src.shared.logger import logger
 from src.shared.config import TELEGRAM_TOKEN, PORT, PUBLIC_APP_URL, RUN_MODE, GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 
-# Импортируем всех наших "рабочих"
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-from src.infra.clients.hf_embed_client import EmbeddingClient # <-- НОВЫЙ ИМПОРТ
+from src.infra.clients.hf_embed_client import EmbeddingClient
 from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
 
@@ -24,18 +23,23 @@ def main() -> None:
     """Сборка и запуск бота на новой архитектуре."""
     logger.info(f"Starting bot in {RUN_MODE} mode...")
 
-    # 1. Инициализация зависимостей (Dependency Injection)
+    # 1. Инициализация зависимостей
     supabase_repo = SupabaseRepo()
     or_client = OpenRouterClient()
     whisper_client = WhisperClient()
-    embed_client = EmbeddingClient() # <-- СОЗДАЕМ КЛИЕНТ ЭМБЕДДИНГОВ
+    embed_client = EmbeddingClient()
 
     # 2. Сборка приложения Telegram
-    builder = Application.builder().token(TELEGRAM_TOKEN)
+    # ИЗМЕНЕНИЕ: Увеличиваем таймауты, чтобы обработчик успевал выполнить все API-запросы
+    builder = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .read_timeout(30)
+        .write_timeout(30)
+    )
     application = builder.build()
     
     # 3. Передаем инстансы сервисов в bot_data
-    # ИЗМЕНЕНИЕ: AIService теперь тоже зависит от repo
     ai_service = AIService(or_client, whisper_client, embed_client, supabase_repo)
     lead_service = LeadService(supabase_repo, application.bot)
     
