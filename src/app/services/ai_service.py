@@ -1,6 +1,7 @@
 # START OF FILE: src/app/services/ai_service.py
 
-from typing import List
+import time
+from typing import List, Dict, Any, Tuple
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
@@ -22,26 +23,27 @@ class AIService:
         self.embed_client = embed_client
         self.repo = repo
         self.system_prompt = self._load_system_prompt()
+        self.disclaimer = "\n\n<i><b>Важно:</b> эта информация носит справочный характер и не является юридической консультацией.</i>"
         logger.info("AIService initialized with all dependencies.")
 
     def _load_system_prompt(self) -> str:
-        # ИСПРАВЛЕНИЕ: Ужесточаем правила форматирования
+        # Промпт остается без изменений
         return (
             "Ты — юрист-консультант по банкротству Вячеслав Курилин. Твоя речь — человечная, мягкая и уверенная. Твоя задача — помочь клиенту.\n\n"
             "**СТРОГИЕ ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:**\n"
             "1. **ТЕМАТИКА:** Ты отвечаешь **ТОЛЬКО** на вопросы, связанные с долгами, кредитами, финансами и процедурой банкротства в РФ. Если вопрос не по теме, ты **ОБЯЗАН** вежливо ответить: 'К сожалению, я специализируюсь только на вопросах, связанных с финансами и процедурой банкротства. Я не могу ответить на этот вопрос.'\n"
-            "2. **КРАТКОСТЬ:** Твой ответ должен быть коротким, 2-3 небольших абзаца.\n"
-            "3. **ФОРМАТИРОВАНИЕ:** Используй **ТОЛЬКО** следующие HTML-теги: `<b>` для жирного, `<i>` для курсива, `<a>` для ссылок. **СТРОГО ЗАПРЕЩЕНО** использовать любые другие теги, особенно `<ul>`, `<li>`, `<div>`, `<p>`.\n"
-            "4. **ЧИСТОТА ОТВЕТА:** В твоем ответе не должно быть никаких служебных слов вроде 'Ответ:'. Сразу начинай отвечать по существу.\n"
-            "5. **ЭТИКЕТ:** Никогда не представляйся. Никогда не упоминай слова 'контекст', 'база знаний', 'AI', 'модель'."
+            "2. **БЕЗОПАСНОСТЬ:** Если предоставленной информации (в истории диалога или в базе знаний) недостаточно для точного ответа, или вопрос касается очень специфической, узкой ситуации, ты **ОБЯЗАН** ответить: 'Чтобы дать точный ответ по вашей ситуации, мне недостаточно информации. Рекомендую вам напрямую связаться со специалистом для детального разбора.'\n"
+            "3. **ПРИОРИТЕТ КОНТЕКСТА:** Если факты из базы знаний (RAG) противоречат предыдущей истории диалога, **приоритет всегда у фактов из базы знаний**.\n"
+            "4. **ФОРМАТИРОВАНИЕ:** Используй **ТОЛЬКО** следующие HTML-теги: `<b>` для жирного, `<i>` для курсива, `<a>` для ссылок. **СТРОГО ЗАПРЕЩЕНО** использовать любые другие теги, особенно `<ul>`, `<li>`, `<div>`, `<p>`.\n"
+            "5. **ЧИСТОТА ОТВЕТА:** В твоем ответе не должно быть никаких служебных слов вроде 'Ответ:'. Сразу начинай отвечать по существу.\n"
         )
-
+        
     def _build_rag_prompt(
         self,
         question: str,
         history: List[Message],
-        rag_chunks: List[dict]
-    ) -> List[dict]:
+        rag_chunks: List[Dict[str, Any]]
+    ) -> List[Dict[str, str]]:
         messages = [{"role": "system", "content": self.system_prompt}]
         if history:
             history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
@@ -59,15 +61,41 @@ class AIService:
         messages.append({"role": "user", "content": user_prompt_text})
         return messages
 
-    def get_text_response(self, user_id: int, user_question: str) -> str:
+    # ИЗМЕНЕНИЕ: Теперь возвращаем кортеж (ответ, debug_info)
+    def get_text_response(self, user_id: int, user_question: str) -> Tuple[str, Dict[str, Any]]:
+        start_time = time.time()
+        
         history = self.repo.get_recent_messages(user_id)
         embedding = self.embed_client.get_embedding(user_question)
         rag_chunks = []
         if embedding:
             rag_chunks = self.repo.find_similar_chunks(embedding)
+        
         messages_to_send = self._build_rag_prompt(user_question, history, rag_chunks)
         response_text = self.or_client.get_chat_completion(messages_to_send)
-        return response_text
+        
+        end_time = time.time()
+
+        # Собираем всю отладочную информацию
+        debug_info = {
+            "user_question": user_question,
+            "llm_response": response_text,
+            "final_prompt": messages_to_send,
+            "rag_chunks": rag_chunks,
+            "conversation_history": [msg.__dict__ for msg in history],
+            "processing_time": f"{end_time - start_time:.2f}s"
+        }
+
+        # Логируем ключевые метрики
+        scores = [f"{chunk.get('similarity', 0):.4f}" for chunk in rag_chunks]
+        logger.info(
+            f"Response generated for user {user_id}. "
+            f"Time: {debug_info['processing_time']}. "
+            f"RAG chunks: {len(rag_chunks)} (Scores: {', '.join(scores) if scores else 'N/A'})."
+        )
+        
+        final_response = response_text + self.disclaimer
+        return final_response, debug_info
 
     def transcribe_voice(self, audio_data: bytes) -> str | None:
         return self.whisper_client.transcribe(audio_data)

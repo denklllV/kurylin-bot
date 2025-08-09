@@ -1,11 +1,11 @@
 # START OF FILE: src/infra/clients/supabase_repo.py
 
 from supabase import create_client, Client
-from typing import List
+from typing import List, Dict, Any
 
 from src.shared.logger import logger
 from src.shared.config import SUPABASE_URL, SUPABASE_KEY
-from src.domain.models import User, Lead, Message
+from src/domain/models import User, Lead, Message
 
 class SupabaseRepo:
     def __init__(self):
@@ -48,26 +48,21 @@ class SupabaseRepo:
         except Exception as e:
             logger.error(f"Error saving message for user {user_id}: {e}")
 
-    # --- НОВЫЙ МЕТОД ДЛЯ ПАМЯТИ ---
     def get_recent_messages(self, user_id: int, limit: int = 4) -> List[Message]:
-        """Получает последние N сообщений для формирования краткосрочной памяти."""
         try:
             response = self.client.table('messages').select('role, content') \
                 .eq('user_id', user_id).order('created_at', desc=True).limit(limit).execute()
-            
-            # Преобразуем ответ в доменные модели и переворачиваем, чтобы порядок был хронологическим
             messages = [Message(role=item['role'], content=item['content']) for item in response.data]
             return list(reversed(messages))
         except Exception as e:
             logger.error(f"Error fetching recent messages for user {user_id}: {e}")
             return []
             
-    # --- МЕТОД ДЛЯ RAG ---
-    def find_similar_chunks(self, embedding: List[float], match_threshold: float = 0.5, match_count: int = 3) -> List[dict]:
-        """Ищет релевантные фрагменты в базе знаний через векторный поиск."""
-        if not embedding:
-            return []
+    # ИЗМЕНЕНИЕ: Теперь возвращаем список словарей, а не просто контент
+    def find_similar_chunks(self, embedding: List[float], match_threshold: float = 0.5, match_count: int = 3) -> List[Dict[str, Any]]:
+        if not embedding: return []
         try:
+            # `match_documents` должна возвращать `content` и `similarity`
             response = self.client.rpc('match_documents', {
                 'query_embedding': embedding,
                 'match_threshold': match_threshold,

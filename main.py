@@ -20,7 +20,6 @@ from src.app.services.lead_service import LeadService
 from src.api.telegram import handlers
 
 def main() -> None:
-    """Сборка и запуск бота на новой архитектуре."""
     logger.info(f"Starting bot in {RUN_MODE} mode...")
 
     # 1. Инициализация зависимостей
@@ -30,7 +29,6 @@ def main() -> None:
     embed_client = EmbeddingClient()
 
     # 2. Сборка приложения Telegram
-    # ИЗМЕНЕНИЕ: Увеличиваем таймауты, чтобы обработчик успевал выполнить все API-запросы
     builder = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
@@ -45,6 +43,7 @@ def main() -> None:
     
     application.bot_data['ai_service'] = ai_service
     application.bot_data['lead_service'] = lead_service
+    application.bot_data['last_debug_info'] = {} # Инициализируем хранилище
     
     # 4. Регистрация обработчиков
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
@@ -62,7 +61,11 @@ def main() -> None:
         fallbacks=[CommandHandler('cancel', handlers.cancel), MessageHandler(cancel_filter, handlers.cancel)],
     )
     
+    # --- ИЗМЕНЕНИЕ: Добавляем debug-команды ---
     application.add_handler(CommandHandler("start", handlers.start))
+    application.add_handler(CommandHandler("last_answer", handlers.last_answer_debug))
+    application.add_handler(CommandHandler("health_check", handlers.health_check))
+    
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(contact_button_filter, handlers.contact_human))
     application.add_handler(MessageHandler(filters.VOICE, handlers.handle_voice_message))
@@ -88,3 +91,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# END OF FILE: main.py
