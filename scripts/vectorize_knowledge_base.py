@@ -1,117 +1,98 @@
-# scripts/vectorize_knowledge_base.py
+# START OF FILE: scripts/vectorize_knowledge_base.py
+
 import json
 import os
 import sys
+import time
 from dotenv import load_dotenv
+from pathlib import Path
 
-# --- Начальная настройка для импорта модулей из src ---
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(project_root)
+# --- НАДЁЖНЫЙ ШАБЛОН ЗАГРУЗКИ ---
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
+load_dotenv(project_root / ".env", override=True)
 
-dotenv_path = os.path.join(project_root, '.env')
-if os.path.exists(dotenv_path):
-    load_dotenv(dotenv_path=dotenv_path)
-else:
-    print("Внимание: .env файл не найден, скрипт может не работать без переменных окружения.")
+REQUIRED_VARS = ["SUPABASE_URL", "SUPABASE_KEY"]
+for var in REQUIRED_VARS:
+    if not os.getenv(var):
+        raise RuntimeError(f"{var} is missing. Check your .env file.")
+# ------------------------------------
 
-# --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-# Указываем путь для кэша внутри нашей рабочей директории
-CACHE_DIR = os.path.join(project_root, "cache")
-os.makedirs(CACHE_DIR, exist_ok=True)
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
-
+# --- Импорты после настройки путей ---
 from sentence_transformers import SentenceTransformer
-from supabase import create_client, Client
+from src.infra.clients.supabase_repo import SupabaseRepo
+from src.shared.logger import logger
 
-from src.config import logger, SUPABASE_URL, SUPABASE_KEY, EMBEDDING_MODEL_NAME
-
-def get_db_client() -> Client:
-    """Инициализирует и возвращает клиент Supabase."""
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise ValueError("Переменные окружения SUPABASE_URL и SUPABASE_KEY должны быть установлены.")
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
-def load_and_prepare_data() -> list[dict]:
-    """Загружает данные из JSON-файлов и подготавливает их к векторизации."""
+def load_data_from_json() -> list[dict]:
+    """Загружает, объединяет и фильтрует данные из JSON-источников."""
     prepared_data = []
-    
+    # ... (логика без изменений) ...
     try:
         with open('data/faq.json', 'r', encoding='utf-8') as f:
             faq_data = json.load(f)
         for item in faq_data:
-            content = f"Вопрос: {item['question']}\nОтвет: {item['answer']}"
-            prepared_data.append({
-                "content": content,
-                "source": "FAQ"
-            })
+            content = f"Вопрос: {item.get('question', '')}\nОтвет: {item.get('answer', '')}"
+            if content.strip(): prepared_data.append({"content": content, "source": "FAQ"})
         logger.info(f"Загружено {len(faq_data)} записей из FAQ.")
     except FileNotFoundError:
         logger.warning("Файл faq.json не найден, пропущен.")
-
     try:
         with open('data/interviews.json', 'r', encoding='utf-8') as f:
             interviews_data = json.load(f)
         for item in interviews_data:
-            content = item['quote']
-            source = f"Цитата из «{item['source_name']}»"
-            prepared_data.append({
-                "content": content,
-                "source": source
-            })
+            content = item.get('quote', '')
+            if content.strip(): prepared_data.append({"content": content, "source": f"Цитата из «{item.get('source_name', '')}»"})
         logger.info(f"Загружено {len(interviews_data)} записей из Интервью.")
     except FileNotFoundError:
         logger.warning("Файл interviews.json не найден, пропущен.")
-        
     return prepared_data
 
-def vectorize_and_upload(db_client: Client, data: list[dict], model: SentenceTransformer):
-    """Векторизует данные и загружает их в Supabase."""
-    if not data:
-        logger.warning("Нет данных для векторизации. Загрузка отменена.")
+
+def run_vectorization():
+    """
+    Полностью очищает базу знаний, локально вычисляет эмбеддинги
+    и загружает их в Supabase.
+    """
+    logger.info("--- Starting LOCAL Vectorization and Upload ---")
+    
+    # 1. Загружаем данные из JSON
+    data_to_process = load_data_from_json()
+    if not data_to_process:
+        logger.warning("No data found. Aborting."); return
+
+    # 2. Загружаем локальную модель
+    model_name = 'cointegrated/rubert-tiny2'
+    logger.info(f"Loading local SentenceTransformer model: {model_name}...")
+    try:
+        model = SentenceTransformer(model_name, device='cpu')
+        logger.info("Model loaded successfully.")
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}", exc_info=True)
         return
-
-    logger.info("Очистка старой базы знаний в Supabase...")
-    db_client.table('knowledge_base').delete().neq('id', 0).execute()
-
-    logger.info(f"Начинается векторизация {len(data)} фрагментов текста...")
-    
-    contents_to_vectorize = [item['content'] for item in data]
-    
-    embeddings = model.encode(contents_to_vectorize, show_progress_bar=True)
-    
-    logger.info("Векторизация завершена. Подготовка данных для загрузки...")
-    
-    records_to_upload = []
-    for i, item in enumerate(data):
-        records_to_upload.append({
-            'content': item['content'],
-            'embedding': embeddings[i].tolist(),
-            'source': item['source']
-        })
         
-    logger.info(f"Загрузка {len(records_to_upload)} записей в Supabase...")
+    # 3. Вычисляем эмбеддинги локально
+    contents = [item['content'] for item in data_to_process]
+    logger.info(f"Encoding {len(contents)} documents locally...")
+    embeddings = model.encode(contents, show_progress_bar=True, convert_to_numpy=True)
+    logger.info("Encoding complete.")
     
-    db_client.table('knowledge_base').insert(records_to_upload).execute()
+    # 4. Подготавливаем записи для загрузки
+    records_to_upload = [
+        {'content': item['content'], 'embedding': emb.tolist(), 'source': item['source']}
+        for item, emb in zip(data_to_process, embeddings)
+    ]
     
-    logger.info("✅ База знаний успешно векторизована и загружена в Supabase!")
-
-def main():
-    """Основная функция скрипта."""
-    logger.info("--- Запуск скрипта векторизации базы знаний ---")
+    # 5. Очищаем и загружаем в Supabase
+    repo = SupabaseRepo()
+    logger.info("Clearing the 'knowledge_base' table in Supabase...")
+    repo.client.table('knowledge_base').delete().neq('id', 0).execute()
     
-    db_client = get_db_client()
-    logger.info(f"Загрузка модели эмбеддингов: {EMBEDDING_MODEL_NAME}...")
-    # --- ИЗМЕНЕНИЕ ЗДЕСЯ ---
-    model = SentenceTransformer(EMBEDDING_MODEL_NAME, device='cpu', cache_folder=CACHE_DIR) 
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
-    logger.info("Модель успешно загружена.")
-
-    prepared_data = load_and_prepare_data()
-
-    vectorize_and_upload(db_client, prepared_data, model)
+    logger.info(f"Upserting {len(records_to_upload)} records to Supabase...")
+    repo.client.table('knowledge_base').insert(records_to_upload).execute()
     
-    logger.info("--- Скрипт завершил работу ---")
-
+    logger.info("✅ Knowledge base has been successfully vectorized and uploaded!")
 
 if __name__ == "__main__":
-    main()
+    run_vectorization()
+
+# END OF FILE: scripts/vectorize_knowledge_base.py
