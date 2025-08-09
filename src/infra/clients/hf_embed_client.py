@@ -8,9 +8,8 @@ from src.shared.logger import logger
 from src.shared.config import HF_API_KEY
 
 class EmbeddingClient:
-    # Оставляем эту модель, так как она хорошая, но меняем способ обращения к ней
-    def __init__(self, model_name: str = 'intfloat/multilingual-e5-small'):
-        # ИСПРАВЛЕНИЕ: Используем прямой эндпоинт модели, а не пайплайн
+    # ИЗМЕНЕНИЕ: Меняем модель на специализированную для русского языка
+    def __init__(self, model_name: str = 'cointegrated/rubert-tiny2-embedding'):
         self.api_url = f"https://api-inference.huggingface.co/models/{model_name}"
         self.headers = {"Authorization": f"Bearer {HF_API_KEY}"}
         logger.info(f"EmbeddingClient initialized for API model: {model_name}")
@@ -22,18 +21,17 @@ class EmbeddingClient:
             return None
         
         try:
-            # Модели e5 требуют добавления "query: "
-            input_text = "query: " + text.replace("\n", " ")
+            # Для этой модели префикс "query: " не нужен
+            input_text = text.replace("\n", " ")
             
             response = requests.post(
                 self.api_url,
                 headers=self.headers,
-                json={"inputs": input_text} # Упрощаем тело запроса
+                json={"inputs": input_text}
             )
             response.raise_for_status()
             
             embedding_list = response.json()
-            # Ответ от прямого эндпоинта имеет другую структуру
             if isinstance(embedding_list, list) and embedding_list and isinstance(embedding_list[0], list):
                 embedding = embedding_list[0]
                 if isinstance(embedding, list) and all(isinstance(i, float) for i in embedding):
