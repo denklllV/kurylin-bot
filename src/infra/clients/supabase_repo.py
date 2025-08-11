@@ -5,7 +5,6 @@ from typing import List, Dict, Any
 
 from src.shared.logger import logger
 from src.shared.config import SUPABASE_URL, SUPABASE_KEY
-# ИСПРАВЛЕНИЕ: Используем точки вместо слэшей для импорта
 from src.domain.models import User, Lead, Message
 
 class SupabaseRepo:
@@ -13,7 +12,7 @@ class SupabaseRepo:
         self.client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
         logger.info("SupabaseRepo initialized.")
 
-    # --- Методы для пользователей и лидов (без изменений) ---
+    # --- Методы для пользователей и лидов ---
     def save_user(self, user: User):
         try:
             self.client.table('users').upsert({
@@ -32,20 +31,19 @@ class SupabaseRepo:
             logger.info(f"Lead for user {lead.user_id} saved.")
         except Exception as e: logger.error(f"Error saving lead for {lead.user_id}: {e}")
 
-    # --- Методы для сообщений (без изменений) ---
+    # --- Методы для сообщений ---
     def save_message(self, user_id: int, message: Message):
         try:
             self.client.table('messages').insert({
                 'user_id': user_id, 'role': message.role, 'content': message.content
             }).execute()
             logger.info(f"Message from '{message.role}' for user {user_id} saved.")
-        except Exception as e: logger.error(f"Error saving message for user {user_id}: {e}")
+        except Exception as e: logger.error(f"Error saving message for user {user.id}: {e}")
 
     def get_recent_messages(self, user_id: int, limit: int = 4) -> List[Message]:
         try:
             response = self.client.table('messages').select('role, content') \
                 .eq('user_id', user_id).order('created_at', desc=True).limit(limit).execute()
-            # ИЗМЕНЕНИЕ: Добавляем метод to_dict() для сериализации
             messages = [Message(role=item['role'], content=item['content']) for item in response.data]
             return list(reversed(messages))
         except Exception as e:
@@ -65,22 +63,32 @@ class SupabaseRepo:
             logger.error(f"Error during vector search RPC call: {e}")
             return []
 
-    # --- Методы для переиндексации (без изменений) ---
-    def get_all_knowledge_chunks(self) -> List[Dict[str, Any]]:
-        """Получает все записи из базы знаний для переиндексации."""
+    # --- АНАЛИТИЧЕСКИЕ МЕТОДЫ, КОТОРЫХ НЕ ОКАЗАЛОСЬ В ПРОШЛОМ ДЕПЛОЕ ---
+    def get_analytics_by_source(self) -> List[Dict[str, Any]]:
+        """Получает статистику лидов по UTM-меткам, вызывая RPC."""
         try:
-            response = self.client.table('knowledge_base').select('id, content').execute()
+            response = self.client.rpc('get_leads_by_source').execute()
             return response.data
         except Exception as e:
-            logger.error(f"Failed to fetch all knowledge chunks: {e}")
+            logger.error(f"Error calling RPC get_leads_by_source: {e}")
+            return []
+            
+    def get_analytics_by_region(self) -> List[Dict[str, Any]]:
+        """Получает статистику лидов по регионам, вызывая RPC."""
+        try:
+            response = self.client.rpc('get_leads_by_region').execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Error calling RPC get_leads_by_region: {e}")
             return []
 
-    def update_chunk_embedding(self, chunk_id: int, embedding: List[float]):
-        """Обновляет эмбеддинг для конкретного чанка."""
+    def get_analytics_by_day_of_week(self) -> List[Dict[str, Any]]:
+        """Получает статистику лидов по дням недели, вызывая RPC."""
         try:
-            self.client.table('knowledge_base').update({'embedding': embedding}).eq('id', chunk_id).execute()
-            logger.info(f"Successfully updated embedding for chunk ID {chunk_id}.")
+            response = self.client.rpc('get_leads_by_day_of_week').execute()
+            return response.data
         except Exception as e:
-            logger.error(f"Failed to update embedding for chunk ID {chunk_id}: {e}")
+            logger.error(f"Error calling RPC get_leads_by_day_of_week: {e}")
+            return []
 
 # END OF FILE: src/infra/clients/supabase_repo.py
