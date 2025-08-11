@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-# ВОССТАНАВЛИВАЕМ: Возвращаем EmbeddingClient как зависимость
+# ИЗМЕНЕНИЕ: Возвращаем импорт нашего HF API клиента
 from src.infra.clients.hf_embed_client import EmbeddingClient
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.domain.models import Message
@@ -16,13 +16,12 @@ class AIService:
         self,
         or_client: OpenRouterClient,
         whisper_client: WhisperClient,
-        # ИЗМЕНЕНИЕ: Принимаем embed_client как зависимость
+        # ИЗМЕНЕНИЕ: Указываем правильный тип клиента
         embed_client: EmbeddingClient,
         repo: SupabaseRepo
     ):
         self.or_client = or_client
         self.whisper_client = whisper_client
-        # ИЗМЕНЕНИЕ: Сохраняем embed_client
         self.embed_client = embed_client
         self.repo = repo
         self.system_prompt = self._load_system_prompt()
@@ -30,6 +29,7 @@ class AIService:
         logger.info("AIService initialized.")
 
     def _load_system_prompt(self) -> str:
+        # ... (код без изменений) ...
         return (
             "Ты — юрист-консультант по банкротству Вячеслав Курилин. Твоя речь — человечная, мягкая и уверенная. Твоя задача — помочь клиенту.\n\n"
             "**СТРОГИЕ ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:**\n"
@@ -46,6 +46,7 @@ class AIService:
         history: List[Message],
         rag_chunks: List[Dict[str, Any]]
     ) -> List[Dict[str, str]]:
+        # ... (код без изменений) ...
         messages = [{"role": "system", "content": self.system_prompt}]
         if history:
             history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
@@ -68,7 +69,6 @@ class AIService:
         
         history = self.repo.get_recent_messages(user_id)
         
-        # ИЗМЕНЕНИЕ: Убираем создание клиента "на лету" и используем инжектированный self.embed_client
         embedding = self.embed_client.get_embedding(user_question)
         
         rag_chunks = []
@@ -85,7 +85,8 @@ class AIService:
             "llm_response": response_text,
             "final_prompt": messages_to_send,
             "rag_chunks": rag_chunks,
-            "conversation_history": [msg.to_dict() for msg in history], # Используем to_dict, если он есть
+            # ИСПРАВЛЕНИЕ: Теперь этот вызов будет работать благодаря методу to_dict()
+            "conversation_history": [msg.to_dict() for msg in history],
             "processing_time": f"{end_time - start_time:.2f}s"
         }
 

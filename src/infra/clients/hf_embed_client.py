@@ -8,11 +8,10 @@ from src.shared.logger import logger
 from src.shared.config import HF_API_KEY
 
 class EmbeddingClient:
-    # ИСПРАВЛЕНИЕ: Используем правильное имя модели, соответствующее базе знаний
     def __init__(self, model_name: str = 'cointegrated/rubert-tiny2'):
-        self.api_url = f"https://api-inference.huggingface.co/models/{model_name}"
+        self.api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{model_name}"
         self.headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-        logger.info(f"EmbeddingClient initialized for API model: {model_name}")
+        logger.info(f"EmbeddingClient initialized for HuggingFace Feature Extraction pipeline: {model_name}")
 
     @lru_cache(maxsize=1024)
     def get_embedding(self, text: str) -> List[float] | None:
@@ -21,24 +20,28 @@ class EmbeddingClient:
             return None
         
         try:
-            # Для этой модели префикс "query: " не нужен, просто передаем текст
             input_text = text.replace("\n", " ")
             
+            # ИСПРАВЛЕНИЕ: Используем правильный формат запроса для Feature Extraction API
             response = requests.post(
                 self.api_url,
                 headers=self.headers,
-                json={"inputs": input_text}
+                json={
+                    "inputs": [input_text], # API ожидает список текстов
+                    "options": {"wait_for_model": True}
+                }
             )
             response.raise_for_status()
             
             embedding_list = response.json()
-            # Проверяем, что ответ имеет ожидаемую структуру
+            
+            # ИСПРАВЛЕНИЕ: API возвращает список векторов. Берем первый.
             if isinstance(embedding_list, list) and embedding_list and isinstance(embedding_list[0], list):
                 embedding = embedding_list[0]
                 if isinstance(embedding, list) and all(isinstance(i, float) for i in embedding):
                     return embedding
 
-            logger.error(f"API returned unexpected data structure: {embedding_list}")
+            logger.error(f"API returned unexpected data structure for embedding: {embedding_list}")
             return None
                 
         except Exception as e:

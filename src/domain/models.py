@@ -1,6 +1,6 @@
 # START OF FILE: src/domain/models.py
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Optional
 
 @dataclass
@@ -22,5 +22,9 @@ class Lead:
 class Message:
     role: str  # 'user' or 'assistant'
     content: str
+    
+    # ИСПРАВЛЕНИЕ: Добавляем метод для сериализации в словарь, чтобы починить /last_answer
+    def to_dict(self):
+        return asdict(self)
 
 # END OF FILE: src/domain/models.py
