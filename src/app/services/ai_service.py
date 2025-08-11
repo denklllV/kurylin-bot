@@ -1,22 +1,36 @@
 # START OF FILE: src/app/services/ai_service.py
 
 import time
+import re  # Импортируем модуль для работы с регулярными выражениями
 from typing import List, Dict, Any
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-# ИЗМЕНЕНИЕ: Возвращаем импорт нашего HF API клиента
 from src.infra.clients.hf_embed_client import EmbeddingClient
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.domain.models import Message
 from src.shared.logger import logger
+
+# ИСПРАВЛЕНИЕ: Функция для очистки HTML от неразрешенных тегов
+def sanitize_html(text: str) -> str:
+    """Удаляет все HTML-теги, кроме <b>, <i>, <a>."""
+    # Создаем регулярное выражение, которое находит любой тег...
+    # ...который НЕ является <b>, </b>, <i>, </i>, <a>, или </a>.
+    # Это более безопасный подход "белого списка".
+    allowed_tags = ['b', 'i', 'a']
+    # Собираем разрешенные теги в одну строку для регулярки
+    allowed_pattern = '|'.join(f'</?{tag}>' for tag in allowed_tags)
+    
+    # Заменяем все, что похоже на тег, но не входит в разрешенные, на пустую строку
+    sanitized_text = re.sub(f'</?(?!({allowed_pattern}))[^>]*>', '', text)
+    return sanitized_text
+
 
 class AIService:
     def __init__(
         self,
         or_client: OpenRouterClient,
         whisper_client: WhisperClient,
-        # ИЗМЕНЕНИЕ: Указываем правильный тип клиента
         embed_client: EmbeddingClient,
         repo: SupabaseRepo
     ):
@@ -29,7 +43,6 @@ class AIService:
         logger.info("AIService initialized.")
 
     def _load_system_prompt(self) -> str:
-        # ... (код без изменений) ...
         return (
             "Ты — юрист-консультант по банкротству Вячеслав Курилин. Твоя речь — человечная, мягкая и уверенная. Твоя задача — помочь клиенту.\n\n"
             "**СТРОГИЕ ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:**\n"
@@ -46,7 +59,6 @@ class AIService:
         history: List[Message],
         rag_chunks: List[Dict[str, Any]]
     ) -> List[Dict[str, str]]:
-        # ... (код без изменений) ...
         messages = [{"role": "system", "content": self.system_prompt}]
         if history:
             history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
@@ -68,7 +80,6 @@ class AIService:
         start_time = time.time()
         
         history = self.repo.get_recent_messages(user_id)
-        
         embedding = self.embed_client.get_embedding(user_question)
         
         rag_chunks = []
@@ -76,8 +87,11 @@ class AIService:
             rag_chunks = self.repo.find_similar_chunks(embedding)
         
         messages_to_send = self._build_rag_prompt(user_question, history, rag_chunks)
-        response_text = self.or_client.get_chat_completion(messages_to_send)
+        raw_response_text = self.or_client.get_chat_completion(messages_to_send)
         
+        # ИСПРАВЛЕНИЕ: Применяем наш санитайзер к ответу от LLM
+        response_text = sanitize_html(raw_response_text)
+
         end_time = time.time()
 
         debug_info = {
@@ -85,7 +99,6 @@ class AIService:
             "llm_response": response_text,
             "final_prompt": messages_to_send,
             "rag_chunks": rag_chunks,
-            # ИСПРАВЛЕНИЕ: Теперь этот вызов будет работать благодаря методу to_dict()
             "conversation_history": [msg.to_dict() for msg in history],
             "processing_time": f"{end_time - start_time:.2f}s"
         }
