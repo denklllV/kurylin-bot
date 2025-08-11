@@ -13,10 +13,12 @@ from src.shared.config import TELEGRAM_TOKEN, PORT, PUBLIC_APP_URL, RUN_MODE, GE
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-# ИЗМЕНЕНИЕ: Возвращаем наш легковесный HF API клиент
-from src.infra.clients.hf_embed_client import EmbeddingClient
+# Мы пока убираем эмбеддинги, так как они не работают
+# from src.infra.clients.local_embed_client import LocalEmbeddingClient 
 from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
+# ИЗМЕНЕНИЕ: Импортируем новый сервис
+from src.app.services.analytics_service import AnalyticsService
 
 from src.api.telegram import handlers
 
@@ -27,8 +29,7 @@ def main() -> None:
     supabase_repo = SupabaseRepo()
     or_client = OpenRouterClient()
     whisper_client = WhisperClient()
-    # ИЗМЕНЕНИЕ: Создаем инстанс HF API клиента
-    embed_client = EmbeddingClient()
+    # embed_client = LocalEmbeddingClient() # Пока отключаем
 
     # 2. Сборка приложения Telegram
     builder = (
@@ -40,15 +41,17 @@ def main() -> None:
     application = builder.build()
     
     # 3. Передаем инстансы сервисов в bot_data
-    ai_service = AIService(or_client, whisper_client, embed_client, supabase_repo)
+    # ai_service = AIService(or_client, whisper_client, embed_client, supabase_repo) # Пока отключаем
     lead_service = LeadService(supabase_repo, application.bot)
+    # ИЗМЕНЕНИЕ: Создаем и передаем AnalyticsService
+    analytics_service = AnalyticsService(supabase_repo)
     
-    application.bot_data['ai_service'] = ai_service
+    # application.bot_data['ai_service'] = ai_service # Пока отключаем
     application.bot_data['lead_service'] = lead_service
+    application.bot_data['analytics_service'] = analytics_service
     application.bot_data['last_debug_info'] = {}
     
     # 4. Регистрация обработчиков
-    # ... (код без изменений) ...
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
     contact_button_filter = filters.Regex('^🧑‍💼 Связаться с человеком$')
     cancel_filter = filters.Regex('^Отмена$')
@@ -65,6 +68,8 @@ def main() -> None:
     )
     
     application.add_handler(CommandHandler("start", handlers.start))
+    # ИЗМЕНЕНИЕ: Регистрируем новую команду
+    application.add_handler(CommandHandler("stats", handlers.stats))
     application.add_handler(CommandHandler("last_answer", handlers.last_answer_debug))
     application.add_handler(CommandHandler("health_check", handlers.health_check))
     
@@ -78,7 +83,6 @@ def main() -> None:
     logger.info("All handlers have been registered.")
     
     # 5. Запуск бота
-    # ... (код без изменений) ...
     if RUN_MODE == 'POLLING':
         logger.info("Running in POLLING mode for local testing.")
         application.run_polling()
