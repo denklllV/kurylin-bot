@@ -1,10 +1,12 @@
 # START OF FILE: src/app/services/ai_service.py
 
+import time
 from typing import List, Dict, Any
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-# УБИРАЕМ EmbeddingClient
+# ВОССТАНАВЛИВАЕМ: Возвращаем EmbeddingClient как зависимость
+from src.infra.clients.hf_embed_client import EmbeddingClient
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.domain.models import Message
 from src.shared.logger import logger
@@ -14,18 +16,20 @@ class AIService:
         self,
         or_client: OpenRouterClient,
         whisper_client: WhisperClient,
-        # УБИРАЕМ embed_client
+        # ИЗМЕНЕНИЕ: Принимаем embed_client как зависимость
+        embed_client: EmbeddingClient,
         repo: SupabaseRepo
     ):
         self.or_client = or_client
         self.whisper_client = whisper_client
+        # ИЗМЕНЕНИЕ: Сохраняем embed_client
+        self.embed_client = embed_client
         self.repo = repo
         self.system_prompt = self._load_system_prompt()
         self.disclaimer = "\n\n<i><b>Важно:</b> эта информация носит справочный характер и не является юридической консультацией.</i>"
         logger.info("AIService initialized.")
 
     def _load_system_prompt(self) -> str:
-        # ... (код без изменений) ...
         return (
             "Ты — юрист-консультант по банкротству Вячеслав Курилин. Твоя речь — человечная, мягкая и уверенная. Твоя задача — помочь клиенту.\n\n"
             "**СТРОГИЕ ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:**\n"
@@ -42,7 +46,6 @@ class AIService:
         history: List[Message],
         rag_chunks: List[Dict[str, Any]]
     ) -> List[Dict[str, str]]:
-        # ... (код без изменений) ...
         messages = [{"role": "system", "content": self.system_prompt}]
         if history:
             history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
@@ -61,40 +64,13 @@ class AIService:
         return messages
 
     def get_text_response(self, user_id: int, user_question: str) -> tuple[str, dict]:
-        # ... (код без изменений, КРОМЕ ОДНОГО) ...
-        history = self.repo.get_recent_messages(user_id)
-        
-        # ЭТОЙ СТРОКИ БОЛЬШЕ НЕ БУДЕТ В AISERVICE, ОНА УЙДЕТ В РЕПОЗИТОРИЙ
-        # embedding = self.embed_client.get_embedding(user_question)
-        
-        # Вместо этого мы будем вызывать метод, который делает и эмбеддинг, и поиск
-        # (На самом деле, для чистоты архитектуры, это неверно. Давайте сделаем правильно.)
-        # Мы оставим EmbeddingClient, но будем использовать его только для ОДНОГО запроса.
-        # Это нарушение, но для простоты сейчас допустим.
-        # В идеале - нужен еще один сервис.
-        # 
-        # Давайте вернемся к предыдущей, более чистой версии.
-        # Мы оставим EmbeddingClient, но теперь он будет работать.
-        # 
-        # Так, стоп. Я снова усложняю. Давайте сделаем просто и правильно.
-        # Бот НЕ должен создавать эмбеддинги. Только искать.
-        # Эмбеддинг для поиска должен создаваться в Supabase.
-
-        # ИЗМЕНЯЕМ ЛОГИКУ: Передаем вопрос напрямую в Supabase, 
-        # а он сам вызовет функцию для создания эмбеддинга и поиска
-        
-        # Этот код мы пока не можем реализовать, т.к. не создали функцию в Supabase.
-        # Поэтому мы пойдем по не самому чистому, но РАБОЧЕМУ пути.
-        # Мы оставим EmbeddingClient, но будем использовать его только для вопроса пользователя.
-
-        import time
-        from src.infra.clients.hf_embed_client import EmbeddingClient
-        embed_client = EmbeddingClient() # Создаем его на лету
-
         start_time = time.time()
         
         history = self.repo.get_recent_messages(user_id)
-        embedding = embed_client.get_embedding(user_question) # <-- Эмбеддинг только для запроса
+        
+        # ИЗМЕНЕНИЕ: Убираем создание клиента "на лету" и используем инжектированный self.embed_client
+        embedding = self.embed_client.get_embedding(user_question)
+        
         rag_chunks = []
         if embedding:
             rag_chunks = self.repo.find_similar_chunks(embedding)
@@ -109,7 +85,7 @@ class AIService:
             "llm_response": response_text,
             "final_prompt": messages_to_send,
             "rag_chunks": rag_chunks,
-            "conversation_history": [msg.__dict__ for msg in history],
+            "conversation_history": [msg.to_dict() for msg in history], # Используем to_dict, если он есть
             "processing_time": f"{end_time - start_time:.2f}s"
         }
 

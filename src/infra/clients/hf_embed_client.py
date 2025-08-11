@@ -8,8 +8,8 @@ from src.shared.logger import logger
 from src.shared.config import HF_API_KEY
 
 class EmbeddingClient:
-    # ИЗМЕНЕНИЕ: Меняем модель на специализированную для русского языка
-    def __init__(self, model_name: str = 'cointegrated/rubert-tiny2-embedding'):
+    # ИСПРАВЛЕНИЕ: Используем правильное имя модели, соответствующее базе знаний
+    def __init__(self, model_name: str = 'cointegrated/rubert-tiny2'):
         self.api_url = f"https://api-inference.huggingface.co/models/{model_name}"
         self.headers = {"Authorization": f"Bearer {HF_API_KEY}"}
         logger.info(f"EmbeddingClient initialized for API model: {model_name}")
@@ -21,7 +21,7 @@ class EmbeddingClient:
             return None
         
         try:
-            # Для этой модели префикс "query: " не нужен
+            # Для этой модели префикс "query: " не нужен, просто передаем текст
             input_text = text.replace("\n", " ")
             
             response = requests.post(
@@ -32,6 +32,7 @@ class EmbeddingClient:
             response.raise_for_status()
             
             embedding_list = response.json()
+            # Проверяем, что ответ имеет ожидаемую структуру
             if isinstance(embedding_list, list) and embedding_list and isinstance(embedding_list[0], list):
                 embedding = embedding_list[0]
                 if isinstance(embedding, list) and all(isinstance(i, float) for i in embedding):

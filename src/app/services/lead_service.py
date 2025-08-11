@@ -14,7 +14,8 @@ class LeadService:
         self.bot = bot
         logger.info("LeadService initialized.")
 
-    def save_lead(self, user: User, lead_data: dict):
+    # ИЗМЕНЕНИЕ: Делаем метод асинхронным, чтобы он мог вызывать другие асинхронные методы
+    async def save_lead(self, user: User, lead_data: dict):
         lead = Lead(
             user_id=user.id,
             name=lead_data.get('name'),
@@ -23,7 +24,8 @@ class LeadService:
             region=lead_data.get('region')
         )
         self.repo.save_lead(lead)
-        self._notify_manager(user, lead)
+        # ИЗМЕНЕНИЕ: Используем await для вызова асинхронного метода
+        await self._notify_manager(user, lead)
 
     async def _notify_manager(self, user: User, lead: Lead):
         if not MANAGER_CHAT_ID:

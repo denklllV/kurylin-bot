@@ -13,7 +13,8 @@ from src.shared.config import TELEGRAM_TOKEN, PORT, PUBLIC_APP_URL, RUN_MODE, GE
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-# УБИРАЕМ EmbeddingClient
+# ВОССТАНАВЛИВАЕМ: Возвращаем EmbeddingClient в зависимости
+from src.infra.clients.hf_embed_client import EmbeddingClient
 from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
 
@@ -26,7 +27,8 @@ def main() -> None:
     supabase_repo = SupabaseRepo()
     or_client = OpenRouterClient()
     whisper_client = WhisperClient()
-    # УБИРАЕМ embed_client
+    # ВОССТАНАВЛИВАЕМ: Создаем инстанс клиента для эмбеддингов
+    embed_client = EmbeddingClient()
 
     # 2. Сборка приложения Telegram
     builder = (
@@ -38,8 +40,8 @@ def main() -> None:
     application = builder.build()
     
     # 3. Передаем инстансы сервисов в bot_data
-    # УБИРАЕМ embed_client из вызова
-    ai_service = AIService(or_client, whisper_client, supabase_repo)
+    # ИЗМЕНЕНИЕ: Передаем embed_client в AIService
+    ai_service = AIService(or_client, whisper_client, embed_client, supabase_repo)
     lead_service = LeadService(supabase_repo, application.bot)
     
     application.bot_data['ai_service'] = ai_service
@@ -47,7 +49,6 @@ def main() -> None:
     application.bot_data['last_debug_info'] = {}
     
     # 4. Регистрация обработчиков
-    # ... (код без изменений) ...
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
     contact_button_filter = filters.Regex('^🧑‍💼 Связаться с человеком$')
     cancel_filter = filters.Regex('^Отмена$')
@@ -77,7 +78,6 @@ def main() -> None:
     logger.info("All handlers have been registered.")
     
     # 5. Запуск бота
-    # ... (код без изменений) ...
     if RUN_MODE == 'POLLING':
         logger.info("Running in POLLING mode for local testing.")
         application.run_polling()
