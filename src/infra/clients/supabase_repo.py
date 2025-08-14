@@ -22,7 +22,6 @@ class SupabaseRepo:
             logger.info(f"User {user.id} saved/updated in DB.")
         except Exception as e: logger.error(f"Error saving user {user.id}: {e}")
 
-    # НОВЫЙ МЕТОД: Проверяет наличие категории у пользователя
     def get_user_category(self, user_id: int) -> str | None:
         """Получает категорию первого запроса пользователя. Возвращает None, если ее нет."""
         try:
@@ -30,12 +29,10 @@ class SupabaseRepo:
                 .eq('user_id', user_id).single().execute()
             return response.data.get('initial_request_category')
         except Exception as e:
-            # PostgrestError может возникнуть, если пользователя еще нет, это не ошибка
             if "JSON object requested, but multiple rows returned" not in str(e) and "JSON object requested, but no rows returned" not in str(e):
                  logger.error(f"Error getting user category for {user_id}: {e}")
-            return None # В любом случае считаем, что категории нет
+            return None
 
-    # НОВЫЙ МЕТОД: Обновляет категорию пользователя
     def update_user_category(self, user_id: int, category: str):
         """Обновляет категорию первого запроса для пользователя."""
         try:
@@ -75,7 +72,6 @@ class SupabaseRepo:
             
     # --- Методы для Базы Знаний (RAG) ---
     def find_similar_chunks(self, embedding: List[float], match_threshold: float = 0.5, match_count: int = 3) -> List[Dict[str, Any]]:
-        # Этот метод пока не работает из-за проблем с эмбеддингами, но мы его оставляем
         if not embedding: return []
         try:
             response = self.client.rpc('match_documents', {
@@ -113,6 +109,16 @@ class SupabaseRepo:
             return response.data
         except Exception as e:
             logger.error(f"Error calling RPC get_leads_by_day_of_week: {e}")
+            return []
+
+    # НОВЫЙ МЕТОД ДЛЯ СТАТИСТИКИ ПО КАТЕГОРИЯМ
+    def get_analytics_by_category(self) -> List[Dict[str, Any]]:
+        """Получает статистику пользователей по категориям запросов, вызывая RPC."""
+        try:
+            response = self.client.rpc('get_users_by_category').execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Error calling RPC get_users_by_category: {e}")
             return []
 
 # END OF FILE: src/infra/clients/supabase_repo.py
