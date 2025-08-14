@@ -14,7 +14,6 @@ from src.api.telegram.keyboards import main_keyboard, cancel_keyboard
 from src.shared.logger import logger
 from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION, MANAGER_CHAT_ID
 
-# ИЗМЕНЕНИЕ: Вся логика теперь здесь
 async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_question: str):
     """
     Обрабатывает входящее сообщение: классифицирует первый запрос,
@@ -23,23 +22,19 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     ai_service: AIService = context.bot_data['ai_service']
     user_id = update.effective_user.id
     
-    # --- НОВАЯ ЛОГИКА: КЛАССИФИКАЦИЯ ПЕРВОГО ЗАПРОСА ---
-    # Проверяем, есть ли у пользователя уже категория
+    # --- Классификация первого запроса ---
     user_category = ai_service.repo.get_user_category(user_id)
     if user_category is None:
         logger.info(f"User {user_id} has no category. Classifying their first message...")
-        # Если категории нет, асинхронно запускаем классификацию
-        # и не ждем ее завершения, чтобы не блокировать ответ пользователю
         new_category = ai_service.classify_text(user_question)
         if new_category:
             ai_service.repo.update_user_category(user_id, new_category)
-    # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
 
     # Сохраняем сообщение пользователя в историю
     ai_service.repo.save_message(user_id, Message(role='user', content=user_question))
     await update.message.reply_chat_action(ChatAction.TYPING)
 
-    # Пока RAG не работает, мы используем заглушку для ответа
+    # Временный ответ-заглушка, пока RAG не работает
     response_text = "Принял ваш вопрос. В данный момент функция ответов временно отключена на техническое обслуживание. Пожалуйста, воспользуйтесь анкетой."
     
     # Сохраняем ответ бота в историю и отправляем пользователю
@@ -79,13 +74,19 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     voice_file = await voice.get_file()
     
     voice_bytes = await voice_file.download_as_bytearray()
-    # Pydub может работать с BytesIO напрямую
-    ogg_audio = io.BytesIO(voice_bytes)
     
+    # ИСПРАВЛЕНИЕ: Используем более надежный метод конвертации
     try:
-        mp3_audio = AudioSegment.from_file(ogg_audio, format="ogg")
-        mp3_data = mp3_audio.export(format="mp3").read()
-        transcribed_text = ai_service.transcribe_voice(mp3_data)
+        # Pydub лучше всего работает с BytesIO
+        ogg_stream = io.BytesIO(voice_bytes)
+        audio = AudioSegment.from_file(ogg_stream)
+        
+        mp3_stream = io.BytesIO()
+        audio.export(mp3_stream, format="mp3")
+        mp3_stream.seek(0)
+        
+        transcribed_text = ai_service.transcribe_voice(mp3_stream.read())
+
     except Exception as e:
         logger.error(f"Error converting audio: {e}", exc_info=True)
         transcribed_text = None
