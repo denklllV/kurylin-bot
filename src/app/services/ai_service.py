@@ -6,8 +6,8 @@ from typing import List, Dict, Any
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-# Мы все еще не используем эмбеддинги, поэтому клиент закомментирован
-# from src.infra.clients.local_embed_client import LocalEmbeddingClient
+# ВОССТАНАВЛИВАЕМ: Нам снова нужен клиент для эмбеддингов
+from src.infra.clients.local_embed_client import LocalEmbeddingClient
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.domain.models import Message
 from src.shared.logger import logger
@@ -24,18 +24,19 @@ class AIService:
         self,
         or_client: OpenRouterClient,
         whisper_client: WhisperClient,
-        # embed_client: LocalEmbeddingClient, # Пока не используем
+        # ВОССТАНАВЛИВАЕМ: Принимаем embed_client как зависимость
+        embed_client: LocalEmbeddingClient,
         repo: SupabaseRepo
     ):
         self.or_client = or_client
         self.whisper_client = whisper_client
-        # self.embed_client = embed_client # Пока не используем
+        # ВОССТАНАВЛИВАЕМ: Сохраняем embed_client
+        self.embed_client = embed_client
         self.repo = repo
         self.system_prompt = self._load_system_prompt()
         self.disclaimer = "\n\nВажно: эта информация носит справочный характер и не является юридической консультацией."
         logger.info("AIService initialized.")
 
-    # НОВЫЙ МЕТОД: Классификация текста с помощью LLM
     def classify_text(self, text: str) -> str | None:
         """Классифицирует текст запроса по заданным категориям."""
         clean_text = " ".join(text.strip().split())
@@ -64,7 +65,6 @@ class AIService:
 
         try:
             category = self.or_client.get_chat_completion(messages)
-            # Убираем лишние символы и проверяем, входит ли ответ в наши категории
             clean_category = category.strip().replace('.', '')
             if clean_category in categories:
                 logger.info(f"Text classified as '{clean_category}'.")
@@ -74,9 +74,10 @@ class AIService:
                 return "Общая консультация"
         except Exception as e:
             logger.error(f"Failed to classify text: {e}", exc_info=True)
-            return "Общая консультация" # Возвращаем значение по умолчанию в случае ошибки API
+            return "Общая консультация"
 
     def _load_system_prompt(self) -> str:
+        """Загружает и возвращает системный промпт для основной задачи."""
         return (
             "Ты — юрист-консультант по банкротству Вячеслав Курилин. Твоя речь — человечная, мягкая и уверенная. Твоя задача — помочь клиенту.\n\n"
             "**СТРОГИЕ ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:**\n"
@@ -87,6 +88,7 @@ class AIService:
         )
         
     def _build_rag_prompt(self, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        """Собирает полный промпт для LLM, включая историю и RAG-контекст."""
         messages = [{"role": "system", "content": self.system_prompt}]
         if history:
             history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
@@ -105,15 +107,16 @@ class AIService:
         return messages
 
     def get_text_response(self, user_id: int, user_question: str) -> tuple[str, dict]:
+        """Основной метод для генерации ответа на вопрос пользователя."""
         start_time = time.time()
         
         history = self.repo.get_recent_messages(user_id)
         
-        # RAG пока не работает
-        # embedding = self.embed_client.get_embedding(user_question)
+        # Пытаемся использовать RAG, вызывая эмбеддинг-клиент
+        embedding = self.embed_client.get_embedding(user_question)
         rag_chunks = []
-        # if embedding:
-        #     rag_chunks = self.repo.find_similar_chunks(embedding)
+        if embedding:
+            rag_chunks = self.repo.find_similar_chunks(embedding)
         
         messages_to_send = self._build_rag_prompt(user_question, history, rag_chunks)
         raw_response_text = self.or_client.get_chat_completion(messages_to_send)
@@ -141,6 +144,7 @@ class AIService:
         return final_response, debug_info
 
     def transcribe_voice(self, audio_data: bytes) -> str | None:
+        """Транскрибирует аудиоданные в текст."""
         return self.whisper_client.transcribe(audio_data)
 
 # END OF FILE: src/app/services/ai_service.py
