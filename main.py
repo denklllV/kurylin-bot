@@ -13,8 +13,6 @@ from src.shared.config import TELEGRAM_TOKEN, PORT, PUBLIC_APP_URL, RUN_MODE, GE
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-# ВОССТАНАВЛИВАЕМ: Импортируем LocalEmbeddingClient, который будет использоваться
-from src.infra.clients.local_embed_client import LocalEmbeddingClient
 from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
 from src.app.services.analytics_service import AnalyticsService
@@ -28,9 +26,6 @@ def main() -> None:
     supabase_repo = SupabaseRepo()
     or_client = OpenRouterClient()
     whisper_client = WhisperClient()
-    # ВОССТАНАВЛИВАЕМ: Создаем инстанс локального клиента для эмбеддингов
-    # Внимание: это может вызвать проблемы на Render из-за памяти.
-    embed_client = LocalEmbeddingClient()
 
     # 2. Сборка приложения Telegram
     builder = (
@@ -42,8 +37,8 @@ def main() -> None:
     application = builder.build()
     
     # 3. Передаем инстансы сервисов в bot_data
-    # ВОССТАНАВЛИВАЕМ: Передаем все зависимости в AIService, включая embed_client
-    ai_service = AIService(or_client, whisper_client, embed_client, supabase_repo)
+    # Инициализируем AIService БЕЗ embed_client
+    ai_service = AIService(or_client, whisper_client, supabase_repo)
     lead_service = LeadService(supabase_repo, application.bot)
     analytics_service = AnalyticsService(supabase_repo)
     
