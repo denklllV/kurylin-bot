@@ -16,8 +16,8 @@ from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION, MANAGE
 
 async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_question: str):
     """
-    Обрабатывает входящее сообщение: классифицирует первый запрос,
-    сохраняет сообщение и отправляет ответ-заглушку.
+    Обрабатывает входящее сообщение: классифицирует, генерирует ответ,
+    сохраняет историю и отправляет ответ пользователю.
     """
     ai_service: AIService = context.bot_data['ai_service']
     user_id = update.effective_user.id
@@ -34,9 +34,12 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     ai_service.repo.save_message(user_id, Message(role='user', content=user_question))
     await update.message.reply_chat_action(ChatAction.TYPING)
 
-    # Временный ответ-заглушка, пока RAG не работает
-    response_text = "Принял ваш вопрос. В данный момент функция ответов временно отключена на техническое обслуживание. Пожалуйста, воспользуйтесь анкетой."
+    # ИЗМЕНЕНИЕ: Убираем заглушку и возвращаем вызов AI для генерации ответа
+    response_text, debug_info = ai_service.get_text_response(user_id, user_question)
     
+    # Сохраняем отладочную информацию для /last_answer
+    context.bot_data['last_debug_info'] = debug_info
+
     # Сохраняем ответ бота в историю и отправляем пользователю
     ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text))
     await update.message.reply_text(response_text, reply_markup=main_keyboard)
@@ -75,9 +78,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     voice_bytes = await voice_file.download_as_bytearray()
     
-    # ИСПРАВЛЕНИЕ: Используем более надежный метод конвертации
     try:
-        # Pydub лучше всего работает с BytesIO
         ogg_stream = io.BytesIO(voice_bytes)
         audio = AudioSegment.from_file(ogg_stream)
         
@@ -165,7 +166,7 @@ async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(report)
 
 
-# --- Логика анкеты (без изменений) ---
+# --- Логика анкеты ---
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Отлично! Приступаем к заполнению анкеты.\n\nКак я могу к вам обращаться?", reply_markup=cancel_keyboard)
     return GET_NAME
