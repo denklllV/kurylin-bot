@@ -22,6 +22,29 @@ class SupabaseRepo:
             logger.info(f"User {user.id} saved/updated in DB.")
         except Exception as e: logger.error(f"Error saving user {user.id}: {e}")
 
+    # НОВЫЙ МЕТОД: Проверяет наличие категории у пользователя
+    def get_user_category(self, user_id: int) -> str | None:
+        """Получает категорию первого запроса пользователя. Возвращает None, если ее нет."""
+        try:
+            response = self.client.table('users').select('initial_request_category') \
+                .eq('user_id', user_id).single().execute()
+            return response.data.get('initial_request_category')
+        except Exception as e:
+            # PostgrestError может возникнуть, если пользователя еще нет, это не ошибка
+            if "JSON object requested, but multiple rows returned" not in str(e) and "JSON object requested, but no rows returned" not in str(e):
+                 logger.error(f"Error getting user category for {user_id}: {e}")
+            return None # В любом случае считаем, что категории нет
+
+    # НОВЫЙ МЕТОД: Обновляет категорию пользователя
+    def update_user_category(self, user_id: int, category: str):
+        """Обновляет категорию первого запроса для пользователя."""
+        try:
+            self.client.table('users').update({'initial_request_category': category}) \
+                .eq('user_id', user_id).execute()
+            logger.info(f"Updated initial request category for user {user_id} to '{category}'.")
+        except Exception as e:
+            logger.error(f"Error updating user category for {user_id}: {e}")
+
     def save_lead(self, lead: Lead):
         try:
             self.client.table('leads').insert({
@@ -38,7 +61,7 @@ class SupabaseRepo:
                 'user_id': user_id, 'role': message.role, 'content': message.content
             }).execute()
             logger.info(f"Message from '{message.role}' for user {user_id} saved.")
-        except Exception as e: logger.error(f"Error saving message for user {user.id}: {e}")
+        except Exception as e: logger.error(f"Error saving message for user {user_id}: {e}")
 
     def get_recent_messages(self, user_id: int, limit: int = 4) -> List[Message]:
         try:
@@ -52,6 +75,7 @@ class SupabaseRepo:
             
     # --- Методы для Базы Знаний (RAG) ---
     def find_similar_chunks(self, embedding: List[float], match_threshold: float = 0.5, match_count: int = 3) -> List[Dict[str, Any]]:
+        # Этот метод пока не работает из-за проблем с эмбеддингами, но мы его оставляем
         if not embedding: return []
         try:
             response = self.client.rpc('match_documents', {
@@ -63,7 +87,7 @@ class SupabaseRepo:
             logger.error(f"Error during vector search RPC call: {e}")
             return []
 
-    # --- АНАЛИТИЧЕСКИЕ МЕТОДЫ, КОТОРЫХ НЕ ОКАЗАЛОСЬ В ПРОШЛОМ ДЕПЛОЕ ---
+    # --- Методы для Аналитики ---
     def get_analytics_by_source(self) -> List[Dict[str, Any]]:
         """Получает статистику лидов по UTM-меткам, вызывая RPC."""
         try:
