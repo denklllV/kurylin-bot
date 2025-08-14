@@ -13,11 +13,10 @@ from src.shared.config import TELEGRAM_TOKEN, PORT, PUBLIC_APP_URL, RUN_MODE, GE
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-# Мы пока убираем эмбеддинги, так как они не работают
+# Мы все еще не используем эмбеддинги, поэтому клиент закомментирован
 # from src.infra.clients.local_embed_client import LocalEmbeddingClient 
 from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
-# ИЗМЕНЕНИЕ: Импортируем новый сервис
 from src.app.services.analytics_service import AnalyticsService
 
 from src.api.telegram import handlers
@@ -41,12 +40,13 @@ def main() -> None:
     application = builder.build()
     
     # 3. Передаем инстансы сервисов в bot_data
-    # ai_service = AIService(or_client, whisper_client, embed_client, supabase_repo) # Пока отключаем
+    # ИЗМЕНЕНИЕ: Возвращаем AIService, он нужен для классификации
+    # Убираем embed_client из вызова, так как он не используется
+    ai_service = AIService(or_client, whisper_client, supabase_repo)
     lead_service = LeadService(supabase_repo, application.bot)
-    # ИЗМЕНЕНИЕ: Создаем и передаем AnalyticsService
     analytics_service = AnalyticsService(supabase_repo)
     
-    # application.bot_data['ai_service'] = ai_service # Пока отключаем
+    application.bot_data['ai_service'] = ai_service
     application.bot_data['lead_service'] = lead_service
     application.bot_data['analytics_service'] = analytics_service
     application.bot_data['last_debug_info'] = {}
@@ -68,7 +68,6 @@ def main() -> None:
     )
     
     application.add_handler(CommandHandler("start", handlers.start))
-    # ИЗМЕНЕНИЕ: Регистрируем новую команду
     application.add_handler(CommandHandler("stats", handlers.stats))
     application.add_handler(CommandHandler("last_answer", handlers.last_answer_debug))
     application.add_handler(CommandHandler("health_check", handlers.health_check))

@@ -1,46 +1,80 @@
 # START OF FILE: src/app/services/ai_service.py
 
 import time
-import re  # Импортируем модуль для работы с регулярными выражениями
+import re
 from typing import List, Dict, Any
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
-from src.infra.clients.hf_embed_client import EmbeddingClient
+# Мы все еще не используем эмбеддинги, поэтому клиент закомментирован
+# from src.infra.clients.local_embed_client import LocalEmbeddingClient
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.domain.models import Message
 from src.shared.logger import logger
 
-# ИСПРАВЛЕНИЕ: Функция для очистки HTML от неразрешенных тегов
-def sanitize_html(text: str) -> str:
-    """Удаляет все HTML-теги, кроме <b>, <i>, <a>."""
-    # Создаем регулярное выражение, которое находит любой тег...
-    # ...который НЕ является <b>, </b>, <i>, </i>, <a>, или </a>.
-    # Это более безопасный подход "белого списка".
-    allowed_tags = ['b', 'i', 'a']
-    # Собираем разрешенные теги в одну строку для регулярки
-    allowed_pattern = '|'.join(f'</?{tag}>' for tag in allowed_tags)
-    
-    # Заменяем все, что похоже на тег, но не входит в разрешенные, на пустую строку
-    sanitized_text = re.sub(f'</?(?!({allowed_pattern}))[^>]*>', '', text)
-    return sanitized_text
-
+def strip_all_html_tags(text: str) -> str:
+    """Полностью удаляет все HTML-теги из текста."""
+    if not text:
+        return ""
+    clean_text = re.sub(r'<.*?>', '', text)
+    return clean_text
 
 class AIService:
     def __init__(
         self,
         or_client: OpenRouterClient,
         whisper_client: WhisperClient,
-        embed_client: EmbeddingClient,
+        # embed_client: LocalEmbeddingClient, # Пока не используем
         repo: SupabaseRepo
     ):
         self.or_client = or_client
         self.whisper_client = whisper_client
-        self.embed_client = embed_client
+        # self.embed_client = embed_client # Пока не используем
         self.repo = repo
         self.system_prompt = self._load_system_prompt()
-        self.disclaimer = "\n\n<i><b>Важно:</b> эта информация носит справочный характер и не является юридической консультацией.</i>"
+        self.disclaimer = "\n\nВажно: эта информация носит справочный характер и не является юридической консультацией."
         logger.info("AIService initialized.")
+
+    # НОВЫЙ МЕТОД: Классификация текста с помощью LLM
+    def classify_text(self, text: str) -> str | None:
+        """Классифицирует текст запроса по заданным категориям."""
+        clean_text = " ".join(text.strip().split())
+        if not clean_text:
+            return "Нецелевой запрос"
+
+        categories = [
+            "Вопрос о стоимости",
+            "Условия и процесс банкротства",
+            "Последствия банкротства",
+            "Общая консультация",
+            "Нецелевой запрос"
+        ]
+        
+        classifier_prompt = (
+            "Твоя задача - классифицировать запрос пользователя. "
+            "Проанализируй следующий текст и определи, к какой из этих категорий он относится:\n"
+            f"- {', '.join(categories)}\n\n"
+            "В своем ответе напиши ТОЛЬКО название одной категории и ничего больше. Будь точен."
+        )
+
+        messages = [
+            {"role": "system", "content": classifier_prompt},
+            {"role": "user", "content": clean_text}
+        ]
+
+        try:
+            category = self.or_client.get_chat_completion(messages)
+            # Убираем лишние символы и проверяем, входит ли ответ в наши категории
+            clean_category = category.strip().replace('.', '')
+            if clean_category in categories:
+                logger.info(f"Text classified as '{clean_category}'.")
+                return clean_category
+            else:
+                logger.warning(f"LLM returned an unknown category: '{category}'. Defaulting to 'Общая консультация'.")
+                return "Общая консультация"
+        except Exception as e:
+            logger.error(f"Failed to classify text: {e}", exc_info=True)
+            return "Общая консультация" # Возвращаем значение по умолчанию в случае ошибки API
 
     def _load_system_prompt(self) -> str:
         return (
@@ -49,16 +83,10 @@ class AIService:
             "1. **ТЕМАТИКА:** Ты отвечаешь **ТОЛЬКО** на вопросы, связанные с долгами, кредитами, финансами и процедурой банкротства в РФ. Если вопрос не по теме, ты **ОБЯЗАН** вежливо ответить: 'К сожалению, я специализируюсь только на вопросах, связанных с финансами и процедурой банкротства. Я не могу ответить на этот вопрос.'\n"
             "2. **БЕЗОПАСНОСТЬ:** Если предоставленной информации (в истории диалога или в базе знаний) недостаточно для точного ответа, или вопрос касается очень специфической, узкой ситуации, ты **ОБЯЗАН** ответить: 'Чтобы дать точный ответ по вашей ситуации, мне недостаточно информации. Рекомендую вам напрямую связаться со специалистом для детального разбора.'\n"
             "3. **ПРИОРИТЕТ КОНТЕКСТА:** Если факты из базы знаний (RAG) противоречат предыдущей истории диалога, **приоритет всегда у фактов из базы знаний**.\n"
-            "4. **ФОРМАТИРОВАНИЕ:** Используй **ТОЛЬКО** следующие HTML-теги: `<b>` для жирного, `<i>` для курсива, `<a>` для ссылок. **СТРОГО ЗАПРЕЩЕНО** использовать любые другие теги, особенно `<ul>`, `<li>`, `<div>`, `<p>`.\n"
-            "5. **ЧИСТОТА ОТВЕТА:** В твоем ответе не должно быть никаких служебных слов вроде 'Ответ:'. Сразу начинай отвечать по существу.\n"
+            "4. **ЧИСТОТА ОТВЕТА:** В твоем ответе не должно быть никаких служебных слов вроде 'Ответ:'. Сразу начинай отвечать по существу.\n"
         )
         
-    def _build_rag_prompt(
-        self,
-        question: str,
-        history: List[Message],
-        rag_chunks: List[Dict[str, Any]]
-    ) -> List[Dict[str, str]]:
+    def _build_rag_prompt(self, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         messages = [{"role": "system", "content": self.system_prompt}]
         if history:
             history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
@@ -80,17 +108,17 @@ class AIService:
         start_time = time.time()
         
         history = self.repo.get_recent_messages(user_id)
-        embedding = self.embed_client.get_embedding(user_question)
         
+        # RAG пока не работает
+        # embedding = self.embed_client.get_embedding(user_question)
         rag_chunks = []
-        if embedding:
-            rag_chunks = self.repo.find_similar_chunks(embedding)
+        # if embedding:
+        #     rag_chunks = self.repo.find_similar_chunks(embedding)
         
         messages_to_send = self._build_rag_prompt(user_question, history, rag_chunks)
         raw_response_text = self.or_client.get_chat_completion(messages_to_send)
         
-        # ИСПРАВЛЕНИЕ: Применяем наш санитайзер к ответу от LLM
-        response_text = sanitize_html(raw_response_text)
+        response_text = strip_all_html_tags(raw_response_text)
 
         end_time = time.time()
 
