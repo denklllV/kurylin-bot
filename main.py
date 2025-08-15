@@ -47,13 +47,11 @@ def main() -> None:
     application.bot_data['last_debug_info'] = {}
     
     # 4. Регистрация обработчиков
-    # Фильтры для кнопок
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
     contact_button_filter = filters.Regex('^🧑‍💼 Связаться с человеком$')
     cancel_filter = filters.Regex('^Отмена$')
-    quiz_button_filter = filters.Regex('^🎯 Квиз$') # Фильтр для кнопки квиза
+    quiz_button_filter = filters.Regex('^🎯 Квиз$')
 
-    # Обработчик анкеты
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(form_button_filter, handlers.start_form)],
         states={
@@ -65,21 +63,19 @@ def main() -> None:
         fallbacks=[CommandHandler('cancel', handlers.cancel), MessageHandler(cancel_filter, handlers.cancel)],
     )
     
-    # Команды
     application.add_handler(CommandHandler("start", handlers.start))
     application.add_handler(CommandHandler("stats", handlers.stats))
     application.add_handler(CommandHandler("last_answer", handlers.last_answer_debug))
     application.add_handler(CommandHandler("health_check", handlers.health_check))
     
-    # Обработчик квиза (реагирует на инлайн-кнопки)
+    # ИЗМЕНЕНИЕ: Регистрируем обработчик для инлайн-кнопки
     application.add_handler(CallbackQueryHandler(handlers.quiz_answer, pattern='^quiz_step_'))
+    application.add_handler(CallbackQueryHandler(handlers.start_quiz_from_prompt, pattern='^start_quiz_from_prompt$'))
 
-    # Обработчики кнопок главного меню
-    application.add_handler(MessageHandler(quiz_button_filter, handlers.start_quiz)) # Запуск квиза
-    application.add_handler(conv_handler) # Запуск анкеты
+    application.add_handler(MessageHandler(quiz_button_filter, handlers.start_quiz))
+    application.add_handler(conv_handler)
     application.add_handler(MessageHandler(contact_button_filter, handlers.contact_human))
-
-    # Обработчики сообщений (должны идти после кнопок)
+    
     application.add_handler(MessageHandler(filters.VOICE, handlers.handle_voice_message))
     text_filter = filters.TEXT & ~filters.COMMAND & ~form_button_filter & ~contact_button_filter & ~quiz_button_filter
     application.add_handler(MessageHandler(text_filter, handlers.handle_text_message))
@@ -102,5 +98,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-# END OF FILE: main.py

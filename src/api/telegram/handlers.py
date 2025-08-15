@@ -2,7 +2,7 @@
 
 import io
 import re
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
 from pydub import AudioSegment
@@ -18,12 +18,12 @@ from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION, MANAGE
 
 async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_question: str):
     """
-    Обрабатывает входящее сообщение: классифицирует, генерирует ответ,
-    сохраняет историю и отправляет ответ пользователю.
+    Основная функция обработки сообщений с классификацией и предложением квиза.
     """
     ai_service: AIService = context.bot_data['ai_service']
     user_id = update.effective_user.id
     
+    # --- Классификация первого запроса ---
     user_category = ai_service.repo.get_user_category(user_id)
     if user_category is None:
         logger.info(f"User {user_id} has no category. Classifying their first message...")
@@ -35,11 +35,36 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_chat_action(ChatAction.TYPING)
 
     response_text, debug_info = ai_service.get_text_response(user_id, user_question)
-    
     context.bot_data['last_debug_info'] = debug_info
-
     ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text))
-    await update.message.reply_text(response_text, reply_markup=main_keyboard)
+    
+    # --- ИЗМЕНЕНИЕ: Проактивное предложение квиза ---
+    quiz_completed, _ = ai_service.repo.get_user_quiz_status(user_id)
+    reply_markup = main_keyboard # По умолчанию используем основную клавиатуру
+
+    # Используем parse_mode=None по умолчанию, чтобы избежать ошибок с Markdown
+    parse_mode = None 
+    
+    if not quiz_completed:
+        # Создаем инлайн-клавиатуру с одной кнопкой
+        quiz_prompt_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎯 Пройти квиз для точной оценки", callback_data="start_quiz_from_prompt")]
+        ])
+        # Прикрепляем ее к сообщению
+        reply_markup = quiz_prompt_keyboard
+        
+        # Добавляем поясняющий текст к основному ответу и включаем Markdown
+        response_text += "\n\n_Чтобы я мог дать более точную рекомендацию, пройдите короткий квиз._"
+        parse_mode = ParseMode.MARKDOWN_V2 # Включаем Markdown только когда он нужен
+
+    # Telegram API не позволяет отправлять ReplyKeyboardMarkup и InlineKeyboardMarkup одновременно.
+    # Поэтому, если мы показываем инлайн-кнопку, мы должны отправить сообщение без ReplyKeyboard.
+    # Пользователь может вернуть ее, отправив любое сообщение.
+    if isinstance(reply_markup, InlineKeyboardMarkup):
+        await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
+    else:
+        await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
+
 
 # --- USER-FACING HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -58,6 +83,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         'Здравствуйте! Я ваш юридический AI-ассистент.\n\n'
         '📝 Чтобы начать анкету, нажмите кнопку ниже.\n'
+        '🎯 Пройдите квиз, чтобы получить точную оценку.\n'
         '❓ Чтобы задать вопрос, просто напишите его в этот чат.',
         reply_markup=main_keyboard
     )
@@ -130,20 +156,31 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = make_quiz_keyboard(next_question_data["answers"], next_step)
         await query.edit_message_text(text=next_question_data["question"], reply_markup=keyboard)
     else:
-        # --- ИЗМЕНЕНИЕ: ЛОГИКА ЗАВЕРШЕНИЯ КВИЗА ---
         lead_service: LeadService = context.bot_data['lead_service']
         user = update.effective_user
         quiz_answers = context.user_data.get('quiz_answers', {})
         
-        # 1. Сохраняем результаты в базу данных
         lead_service.repo.save_quiz_results(user.id, quiz_answers)
-        
-        # 2. Отправляем уведомление менеджеру
         await lead_service.send_quiz_results_to_manager(user, quiz_answers)
 
-        # 3. Отвечаем пользователю и очищаем данные
         await query.edit_message_text(text="Спасибо за ваши ответы! Мы скоро свяжемся с вами для подробной консультации.")
         context.user_data.pop('quiz_answers', None)
+
+# НОВЫЙ ОБРАБОТЧИК: для инлайн-кнопки под сообщением
+async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запускает квиз по нажатию инлайн-кнопки."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Удаляем инлайн-кнопку, чтобы не мешала
+    await query.edit_message_reply_markup(reply_markup=None)
+
+    # Запускаем тот же код, что и при нажатии на обычную кнопку "Квиз"
+    context.user_data['quiz_answers'] = {}
+    step = 0
+    question_data = QUIZ_DATA[step]
+    keyboard = make_quiz_keyboard(question_data["answers"], step)
+    await query.message.reply_text(question_data["question"], reply_markup=keyboard)
         
 # --- ADMIN DEBUG HANDLERS ---
 def is_admin(update: Update) -> bool:
