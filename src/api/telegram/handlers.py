@@ -38,33 +38,24 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     context.bot_data['last_debug_info'] = debug_info
     ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text))
     
-    # --- ИЗМЕНЕНИЕ: Проактивное предложение квиза ---
+    # --- Проактивное предложение квиза ---
     quiz_completed, _ = ai_service.repo.get_user_quiz_status(user_id)
-    reply_markup = main_keyboard # По умолчанию используем основную клавиатуру
-
-    # Используем parse_mode=None по умолчанию, чтобы избежать ошибок с Markdown
+    reply_markup = main_keyboard
     parse_mode = None 
     
     if not quiz_completed:
-        # Создаем инлайн-клавиатуру с одной кнопкой
         quiz_prompt_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎯 Пройти квиз для точной оценки", callback_data="start_quiz_from_prompt")]
         ])
-        # Прикрепляем ее к сообщению
         reply_markup = quiz_prompt_keyboard
-        
-        # Добавляем поясняющий текст к основному ответу и включаем Markdown
-        response_text += "\n\n_Чтобы я мог дать более точную рекомендацию, пройдите короткий квиз._"
-        parse_mode = ParseMode.MARKDOWN_V2 # Включаем Markdown только когда он нужен
+        # Экранируем точки для MarkdownV2
+        response_text += "\n\n_Чтобы я мог дать более точную рекомендацию, пройдите короткий квиз\\._"
+        parse_mode = ParseMode.MARKDOWN_V2
 
-    # Telegram API не позволяет отправлять ReplyKeyboardMarkup и InlineKeyboardMarkup одновременно.
-    # Поэтому, если мы показываем инлайн-кнопку, мы должны отправить сообщение без ReplyKeyboard.
-    # Пользователь может вернуть ее, отправив любое сообщение.
     if isinstance(reply_markup, InlineKeyboardMarkup):
         await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
     else:
         await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
-
 
 # --- USER-FACING HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -166,16 +157,13 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text="Спасибо за ваши ответы! Мы скоро свяжемся с вами для подробной консультации.")
         context.user_data.pop('quiz_answers', None)
 
-# НОВЫЙ ОБРАБОТЧИК: для инлайн-кнопки под сообщением
 async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запускает квиз по нажатию инлайн-кнопки."""
     query = update.callback_query
     await query.answer()
     
-    # Удаляем инлайн-кнопку, чтобы не мешала
     await query.edit_message_reply_markup(reply_markup=None)
 
-    # Запускаем тот же код, что и при нажатии на обычную кнопку "Квиз"
     context.user_data['quiz_answers'] = {}
     step = 0
     question_data = QUIZ_DATA[step]
