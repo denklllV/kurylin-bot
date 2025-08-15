@@ -68,7 +68,6 @@ def main() -> None:
     application.add_handler(CommandHandler("last_answer", handlers.last_answer_debug))
     application.add_handler(CommandHandler("health_check", handlers.health_check))
     
-    # ИЗМЕНЕНИЕ: Регистрируем обработчик для инлайн-кнопки
     application.add_handler(CallbackQueryHandler(handlers.quiz_answer, pattern='^quiz_step_'))
     application.add_handler(CallbackQueryHandler(handlers.start_quiz_from_prompt, pattern='^start_quiz_from_prompt$'))
 
@@ -98,3 +97,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# END OF FILE: main.py
