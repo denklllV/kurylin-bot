@@ -2,6 +2,7 @@
 
 from supabase import create_client, Client
 from typing import List, Dict, Any
+import json
 
 from src.shared.logger import logger
 from src.shared.config import SUPABASE_URL, SUPABASE_KEY
@@ -23,7 +24,6 @@ class SupabaseRepo:
         except Exception as e: logger.error(f"Error saving user {user.id}: {e}")
 
     def get_user_category(self, user_id: int) -> str | None:
-        """Получает категорию первого запроса пользователя. Возвращает None, если ее нет."""
         try:
             response = self.client.table('users').select('initial_request_category') \
                 .eq('user_id', user_id).single().execute()
@@ -34,13 +34,24 @@ class SupabaseRepo:
             return None
 
     def update_user_category(self, user_id: int, category: str):
-        """Обновляет категорию первого запроса для пользователя."""
         try:
             self.client.table('users').update({'initial_request_category': category}) \
                 .eq('user_id', user_id).execute()
             logger.info(f"Updated initial request category for user {user_id} to '{category}'.")
         except Exception as e:
             logger.error(f"Error updating user category for {user_id}: {e}")
+            
+    # НОВЫЙ МЕТОД: Сохраняет результаты квиза в базу данных
+    def save_quiz_results(self, user_id: int, results: Dict):
+        """Сохраняет ответы на квиз и ставит отметку о его прохождении."""
+        try:
+            self.client.table('users').update({
+                'quiz_results': json.dumps(results),
+                'quiz_completed_at': 'now()'
+            }).eq('user_id', user_id).execute()
+            logger.info(f"Saved quiz results for user {user_id}.")
+        except Exception as e:
+            logger.error(f"Error saving quiz results for user {user_id}: {e}")
 
     def save_lead(self, lead: Lead):
         try:
@@ -85,7 +96,6 @@ class SupabaseRepo:
 
     # --- Методы для Аналитики ---
     def get_analytics_by_source(self) -> List[Dict[str, Any]]:
-        """Получает статистику лидов по UTM-меткам, вызывая RPC."""
         try:
             response = self.client.rpc('get_leads_by_source').execute()
             return response.data
@@ -94,7 +104,6 @@ class SupabaseRepo:
             return []
             
     def get_analytics_by_region(self) -> List[Dict[str, Any]]:
-        """Получает статистику лидов по регионам, вызывая RPC."""
         try:
             response = self.client.rpc('get_leads_by_region').execute()
             return response.data
@@ -103,7 +112,6 @@ class SupabaseRepo:
             return []
 
     def get_analytics_by_day_of_week(self) -> List[Dict[str, Any]]:
-        """Получает статистику лидов по дням недели, вызывая RPC."""
         try:
             response = self.client.rpc('get_leads_by_day_of_week').execute()
             return response.data
@@ -111,9 +119,7 @@ class SupabaseRepo:
             logger.error(f"Error calling RPC get_leads_by_day_of_week: {e}")
             return []
 
-    # НОВЫЙ МЕТОД ДЛЯ СТАТИСТИКИ ПО КАТЕГОРИЯМ
     def get_analytics_by_category(self) -> List[Dict[str, Any]]:
-        """Получает статистику пользователей по категориям запросов, вызывая RPC."""
         try:
             response = self.client.rpc('get_users_by_category').execute()
             return response.data

@@ -130,12 +130,19 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = make_quiz_keyboard(next_question_data["answers"], next_step)
         await query.edit_message_text(text=next_question_data["question"], reply_markup=keyboard)
     else:
+        # --- ИЗМЕНЕНИЕ: ЛОГИКА ЗАВЕРШЕНИЯ КВИЗА ---
         lead_service: LeadService = context.bot_data['lead_service']
         user = update.effective_user
+        quiz_answers = context.user_data.get('quiz_answers', {})
         
+        # 1. Сохраняем результаты в базу данных
+        lead_service.repo.save_quiz_results(user.id, quiz_answers)
+        
+        # 2. Отправляем уведомление менеджеру
+        await lead_service.send_quiz_results_to_manager(user, quiz_answers)
+
+        # 3. Отвечаем пользователю и очищаем данные
         await query.edit_message_text(text="Спасибо за ваши ответы! Мы скоро свяжемся с вами для подробной консультации.")
-        await lead_service.send_quiz_results_to_manager(user, context.user_data['quiz_answers'])
-        
         context.user_data.pop('quiz_answers', None)
         
 # --- ADMIN DEBUG HANDLERS ---
