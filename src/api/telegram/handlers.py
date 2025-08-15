@@ -1,6 +1,7 @@
 # START OF FILE: src/api/telegram/handlers.py
 
 import io
+import re
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
@@ -10,7 +11,8 @@ from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
 from src.app.services.analytics_service import AnalyticsService
 from src.domain.models import User, Message
-from src.api.telegram.keyboards import main_keyboard, cancel_keyboard
+from src.api.telegram.keyboards import main_keyboard, cancel_keyboard, make_quiz_keyboard
+from src.api.telegram.quiz_data import QUIZ_DATA
 from src.shared.logger import logger
 from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION, MANAGER_CHAT_ID
 
@@ -22,7 +24,6 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     ai_service: AIService = context.bot_data['ai_service']
     user_id = update.effective_user.id
     
-    # --- Классификация первого запроса ---
     user_category = ai_service.repo.get_user_category(user_id)
     if user_category is None:
         logger.info(f"User {user_id} has no category. Classifying their first message...")
@@ -30,17 +31,13 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
         if new_category:
             ai_service.repo.update_user_category(user_id, new_category)
 
-    # Сохраняем сообщение пользователя в историю
     ai_service.repo.save_message(user_id, Message(role='user', content=user_question))
     await update.message.reply_chat_action(ChatAction.TYPING)
 
-    # ИЗМЕНЕНИЕ: Убираем заглушку и возвращаем вызов AI для генерации ответа
     response_text, debug_info = ai_service.get_text_response(user_id, user_question)
     
-    # Сохраняем отладочную информацию для /last_answer
     context.bot_data['last_debug_info'] = debug_info
 
-    # Сохраняем ответ бота в историю и отправляем пользователю
     ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text))
     await update.message.reply_text(response_text, reply_markup=main_keyboard)
 
@@ -75,19 +72,15 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     voice = update.message.voice
     voice_file = await voice.get_file()
-    
     voice_bytes = await voice_file.download_as_bytearray()
     
     try:
         ogg_stream = io.BytesIO(voice_bytes)
         audio = AudioSegment.from_file(ogg_stream)
-        
         mp3_stream = io.BytesIO()
         audio.export(mp3_stream, format="mp3")
         mp3_stream.seek(0)
-        
         transcribed_text = ai_service.transcribe_voice(mp3_stream.read())
-
     except Exception as e:
         logger.error(f"Error converting audio: {e}", exc_info=True)
         transcribed_text = None
@@ -106,67 +99,75 @@ async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await context.bot.send_message(chat_id=MANAGER_CHAT_ID, text=message_for_manager, parse_mode=ParseMode.HTML)
     await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=main_keyboard)
 
+# --- QUIZ HANDLERS ---
+async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает квиз, отправляя первый вопрос."""
+    context.user_data['quiz_answers'] = {}
+    step = 0
+    question_data = QUIZ_DATA[step]
+    
+    keyboard = make_quiz_keyboard(question_data["answers"], step)
+    await update.message.reply_text(question_data["question"], reply_markup=keyboard)
+
+async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ответ на вопрос квиза и отправляет следующий, либо завершает квиз."""
+    query = update.callback_query
+    await query.answer()
+
+    parts = query.data.split('_')
+    step = int(parts[2])
+    answer_index = int(parts[4])
+
+    question_data = QUIZ_DATA[step]
+    answer_data = question_data["answers"][answer_index]
+    
+    question_text = re.sub(r'^\d+/\d+\.\s*', '', question_data["question"])
+    context.user_data.setdefault('quiz_answers', {})[question_text] = answer_data["text"]
+
+    next_step = step + 1
+    if next_step < len(QUIZ_DATA):
+        next_question_data = QUIZ_DATA[next_step]
+        keyboard = make_quiz_keyboard(next_question_data["answers"], next_step)
+        await query.edit_message_text(text=next_question_data["question"], reply_markup=keyboard)
+    else:
+        lead_service: LeadService = context.bot_data['lead_service']
+        user = update.effective_user
+        
+        await query.edit_message_text(text="Спасибо за ваши ответы! Мы скоро свяжемся с вами для подробной консультации.")
+        await lead_service.send_quiz_results_to_manager(user, context.user_data['quiz_answers'])
+        
+        context.user_data.pop('quiz_answers', None)
+        
 # --- ADMIN DEBUG HANDLERS ---
 def is_admin(update: Update) -> bool:
-    """Проверяет, является ли пользователь администратором."""
     return str(update.effective_user.id) == MANAGER_CHAT_ID
 
 async def last_answer_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /last_answer для маркетолога."""
-    if not is_admin(update):
-        return
-
+    if not is_admin(update): return
     debug_info = context.bot_data.get('last_debug_info')
     if not debug_info:
         await update.message.reply_text("Отладочная информация еще не была записана.")
         return
-
     rag_chunks = debug_info.get('rag_chunks', [])
-    rag_report = "\n\n".join(
-        f"<b>Score: {chunk.get('similarity', 0):.4f}</b>\n<i>{chunk.get('content', '')}</i>"
-        for chunk in rag_chunks
-    ) if rag_chunks else "<i>Ничего не найдено в базе знаний.</i>"
-
+    rag_report = "\n\n".join(f"<b>Score: {chunk.get('similarity', 0):.4f}</b>\n<i>{chunk.get('content', '')}</i>" for chunk in rag_chunks) if rag_chunks else "<i>Ничего не найдено в базе знаний.</i>"
     history = debug_info.get('conversation_history', [])
-    history_report = "\n".join(
-        f"<b>{msg['role']}:</b> {msg['content']}" for msg in history
-    ) if history else "<i>История диалога пуста.</i>"
-    
-    report = (
-        f"<b>--- Отладка последнего ответа ---</b>\n\n"
-        f"<b>Время обработки:</b> {debug_info.get('processing_time', 'N/A')}\n"
-        f"<b>Вопрос пользователя:</b> {debug_info.get('user_question', 'N/A')}\n\n"
-        f"<b>--- Использованная история диалога ---</b>\n{history_report}\n\n"
-        f"<b>--- Найденный контекст (RAG) ---</b>\n{rag_report}"
-    )
-    
+    history_report = "\n".join(f"<b>{msg['role']}:</b> {msg['content']}" for msg in history) if history else "<i>История диалога пуста.</i>"
+    report = (f"<b>--- Отладка последнего ответа ---</b>\n\n" f"<b>Время обработки:</b> {debug_info.get('processing_time', 'N/A')}\n" f"<b>Вопрос пользователя:</b> {debug_info.get('user_question', 'N/A')}\n\n" f"<b>--- Использованная история диалога ---</b>\n{history_report}\n\n" f"<b>--- Найденный контекст (RAG) ---</b>\n{rag_report}")
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /stats для получения аналитического отчета."""
-    if not is_admin(update):
-        return
-
+    if not is_admin(update): return
     await update.message.reply_text("Собираю статистику, это может занять несколько секунд...")
-    
     analytics_service: AnalyticsService = context.bot_data['analytics_service']
     report = analytics_service.generate_summary_report()
-    
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
-
 async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /health_check для технического специалиста."""
-    if not is_admin(update):
-        return
-    
-    report = f"✅ Бот в сети.\n"
-    report += f"🔑 Менеджер ({MANAGER_CHAT_ID}) определен."
-    
+    if not is_admin(update): return
+    report = f"✅ Бот в сети.\n" f"🔑 Менеджер ({MANAGER_CHAT_ID}) определен."
     await update.message.reply_text(report)
 
-
-# --- Логика анкеты ---
+# --- FORM LOGIC ---
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Отлично! Приступаем к заполнению анкеты.\n\nКак я могу к вам обращаться?", reply_markup=cancel_keyboard)
     return GET_NAME
