@@ -1,7 +1,7 @@
 # START OF FILE: src/infra/clients/supabase_repo.py
 
 from supabase import create_client, Client
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import json
 
 from src.shared.logger import logger
@@ -32,6 +32,21 @@ class SupabaseRepo:
             if "JSON object requested, but multiple rows returned" not in str(e) and "JSON object requested, but no rows returned" not in str(e):
                  logger.error(f"Error getting user category for {user_id}: {e}")
             return None
+            
+    # НОВЫЙ МЕТОД: Получает информацию о прохождении квиза
+    def get_user_quiz_status(self, user_id: int) -> Tuple[bool, Dict | None]:
+        """Проверяет, проходил ли пользователь квиз, и возвращает его результаты."""
+        try:
+            response = self.client.table('users').select('quiz_completed_at, quiz_results') \
+                .eq('user_id', user_id).single().execute()
+            
+            data = response.data
+            if data and data.get('quiz_completed_at'):
+                return True, data.get('quiz_results')
+        except Exception:
+            # Ошибки здесь не критичны (например, пользователя нет), просто считаем, что квиз не пройден
+            pass
+        return False, None
 
     def update_user_category(self, user_id: int, category: str):
         try:
@@ -41,12 +56,13 @@ class SupabaseRepo:
         except Exception as e:
             logger.error(f"Error updating user category for {user_id}: {e}")
             
-    # НОВЫЙ МЕТОД: Сохраняет результаты квиза в базу данных
     def save_quiz_results(self, user_id: int, results: Dict):
         """Сохраняет ответы на квиз и ставит отметку о его прохождении."""
         try:
+            # Убедимся, что results - это строка JSON
+            results_json = json.dumps(results, ensure_ascii=False)
             self.client.table('users').update({
-                'quiz_results': json.dumps(results),
+                'quiz_results': results_json,
                 'quiz_completed_at': 'now()'
             }).eq('user_id', user_id).execute()
             logger.info(f"Saved quiz results for user {user_id}.")
