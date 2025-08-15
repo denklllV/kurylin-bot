@@ -70,7 +70,7 @@ class AIService:
             return "Общая консультация"
 
     def _load_system_prompt(self) -> str:
-        """Загружает и возвращает системный промпт для основной задачи."""
+        """Загружает и возвращает базовый системный промпт."""
         return (
             "Ты — юрист-консультант по банкротству Вячеслав Курилин. Твоя речь — человечная, мягкая и уверенная. Твоя задача — помочь клиенту.\n\n"
             "**СТРОГИЕ ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:**\n"
@@ -80,13 +80,25 @@ class AIService:
             "4. **ЧИСТОТА ОТВЕТА:** В твоем ответе не должно быть никаких служебных слов вроде 'Ответ:'. Сразу начинай отвечать по существу.\n"
         )
         
-    def _build_rag_prompt(self, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-        """Собирает полный промпт для LLM, включая историю и (если есть) RAG-контекст."""
-        messages = [{"role": "system", "content": self.system_prompt}]
+    def _build_rag_prompt(self, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]], quiz_context: str = None) -> List[Dict[str, str]]:
+        """Собирает полный промпт, включая опциональный контекст из квиза."""
+        system_prompt = self.system_prompt
+        
+        # ИЗМЕНЕНИЕ: Динамически добавляем контекст квиза в системный промпт
+        if quiz_context:
+            system_prompt += (
+                "\n\n**ВАЖНО:** У тебя есть дополнительная информация о клиенте, "
+                "полученная из квиза. Обязательно используй её для более точного "
+                "и персонализированного ответа.\n"
+                f"--- КОНТЕКСТ КЛИЕНТА ---\n{quiz_context}\n--- КОНЕЦ КОНТЕКСТА ---"
+            )
+
+        messages = [{"role": "system", "content": system_prompt}]
+        
         if history:
             history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
             messages.append({"role": "system", "content": f"Вот предыдущая часть нашего разговора:\n{history_text}"})
-        # RAG отключен, поэтому этот блок никогда не выполнится, но мы оставляем его для будущего
+
         if rag_chunks:
             rag_context = "\n---\n".join([chunk.get('content', '') for chunk in rag_chunks])
             user_prompt_text = (
@@ -101,14 +113,20 @@ class AIService:
         return messages
 
     def get_text_response(self, user_id: int, user_question: str) -> tuple[str, dict]:
-        """Генерирует ответ БЕЗ RAG-контекста."""
+        """Генерирует ответ, используя контекст из квиза (если он есть)."""
         start_time = time.time()
         history = self.repo.get_recent_messages(user_id)
         
-        # RAG отключен, всегда пустой список чанков
-        rag_chunks = []
+        # ИЗМЕНЕНИЕ: Получаем данные квиза и формируем контекст
+        quiz_completed, quiz_results = self.repo.get_user_quiz_status(user_id)
+        quiz_context = None
+        if quiz_completed and isinstance(quiz_results, dict):
+            logger.info(f"User {user_id} has quiz data. Adding it to context.")
+            quiz_context = "\n".join([f"- {q}: {a}" for q, a in quiz_results.items()])
+
+        rag_chunks = [] # RAG отключен
         
-        messages_to_send = self._build_rag_prompt(user_question, history, rag_chunks)
+        messages_to_send = self._build_rag_prompt(user_question, history, rag_chunks, quiz_context)
         raw_response_text = self.or_client.get_chat_completion(messages_to_send)
         response_text = strip_all_html_tags(raw_response_text)
         end_time = time.time()
@@ -122,7 +140,7 @@ class AIService:
             "processing_time": f"{end_time - start_time:.2f}s"
         }
         
-        logger.info(f"Response generated without RAG. Time: {debug_info['processing_time']}.")
+        logger.info(f"Response generated (Quiz context used: {quiz_completed}). Time: {debug_info['processing_time']}.")
         
         final_response = response_text + self.disclaimer
         return final_response, debug_info
