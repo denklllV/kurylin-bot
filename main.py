@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
-    ConversationHandler, CallbackQueryHandler, ContextTypes, ExtBot
+    ConversationHandler, CallbackQueryHandler, ContextTypes, ExtBot, Updater
 )
 
 from src.shared.logger import logger
@@ -29,14 +29,9 @@ from src.api.telegram import handlers
 running_bots: Dict[str, Application] = {}
 
 async def router_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Этот callback вызывается для КАЖДОГО входящего обновления.
-    Его задача - определить, какому боту (клиенту) оно адресовано,
-    и передать управление правильному инстансу Application.
-    """
+    """Маршрутизирует входящие обновления к правильному инстансу Application."""
     token = context.bot.token
     if token in running_bots:
-        # Передаем обновление на обработку в нужный Application
         await running_bots[token].process_update(update)
 
 def register_handlers(app: Application):
@@ -76,7 +71,6 @@ def register_handlers(app: Application):
 async def main() -> None:
     logger.info(f"Starting multi-tenant bot in {RUN_MODE} mode...")
 
-    # --- 1. Инициализация общих сервисов ---
     supabase_repo = SupabaseRepo()
     or_client = OpenRouterClient()
     whisper_client = WhisperClient()
@@ -91,7 +85,6 @@ async def main() -> None:
     lead_service = LeadService(supabase_repo, generic_bot)
     analytics_service = AnalyticsService(supabase_repo)
 
-    # --- 2. Настройка и запуск каждого клиента ---
     for client in clients:
         token = client['bot_token']
         app = Application.builder().token(token).build()
@@ -107,33 +100,37 @@ async def main() -> None:
         running_bots[token] = app
         logger.info(f"Client '{client['client_name']}' (ID: {client['id']}) configured.")
 
-    # --- 3. Настройка и запуск единого веб-сервера (диспетчера) ---
     if RUN_MODE == 'WEBHOOK':
-        # Создаем "диспетчера", который будет принимать ВСЕ обновления
-        # Используем токен первого бота для инициализации, но это не имеет значения
+        # --- ИСПРАВЛЕННАЯ ЛОГИКА ЗАПУСКА WEBHOOK ---
+        # 1. Инициализируем все боты и устанавливаем для них вебхуки
+        for token, app_instance in running_bots.items():
+            await app_instance.initialize()
+            webhook_url = f"{PUBLIC_APP_URL}/{token}"
+            await app_instance.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)
+            logger.info(f"Webhook set for bot with token ending in ...{token[-4:]} to URL: {webhook_url}")
+
+        # 2. Создаем "диспетчера", который будет слушать веб-сервер
+        # Он использует токен только для инициализации, но принимает обновления для всех
         dispatcher_app = Application.builder().token(clients[0]['bot_token']).updater(None).build()
         dispatcher_app.add_handler(MessageHandler(filters.ALL, router_callback))
+        await dispatcher_app.initialize()
+
+        # 3. Запускаем веб-сервер через `run_webhook` на диспетчере
+        logger.info(f"Starting shared webhook server on port {PORT}...")
+        await dispatcher_app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=clients[0]['bot_token'], # url_path обязателен, но Telegram будет его игнорировать
+            webhook_url=PUBLIC_APP_URL
+        )
         
-        async with dispatcher_app:
-            await dispatcher_app.initialize()
-            for token, app_instance in running_bots.items():
-                webhook_url = f"{PUBLIC_APP_URL}/{token}"
-                await app_instance.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)
-                logger.info(f"Webhook set for bot with token ending in ...{token[-4:]} to URL: {webhook_url}")
-
-            # ИСПРАВЛЕНИЕ: Используем `run_server` вместо `start_webhook`
-            logger.info(f"Starting shared webhook server on port {PORT}...")
-            await dispatcher_app.run_server(
-                host="0.0.0.0",
-                port=PORT,
-                webhook_url=PUBLIC_APP_URL
-            )
-            # Приложение будет работать, пока `run_server` активен. asyncio.Event().wait() не нужен.
-
     elif RUN_MODE == 'POLLING':
         logger.info("Starting all clients in POLLING mode...")
-        polling_tasks = [app.run_polling() for app in running_bots.values()]
-        await asyncio.gather(*polling_tasks)
+        # Инициализируем и запускаем каждый бот в режиме поллинга
+        async with Application.builder().token(clients[0]['bot_token']).build() as template_app:
+            await asyncio.gather(
+                *(app.run_polling(allowed_updates=Update.ALL_TYPES) for app in running_bots.values())
+            )
 
 if __name__ == "__main__":
     try:
