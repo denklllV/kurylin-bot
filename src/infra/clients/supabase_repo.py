@@ -13,48 +13,42 @@ class SupabaseRepo:
         self.client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
         logger.info("SupabaseRepo initialized for multi-tenant architecture.")
 
-    # --- Метод загрузки конфигураций клиентов ---
     def get_active_clients(self) -> List[Dict[str, Any]]:
-        """Загружает данные всех активных клиентов из базы данных."""
         try:
-            response = self.client.table('clients').select('id, client_name, bot_token, manager_contact') \
-                .eq('status', 'active').execute()
+            response = self.client.table('clients').select('id, client_name, bot_token, manager_contact').eq('status', 'active').execute()
             logger.info(f"Loaded {len(response.data)} active client(s).")
             return response.data
         except Exception as e:
             logger.error(f"FATAL: Could not load clients from Supabase. Error: {e}", exc_info=True)
             return []
 
-    # --- Методы для пользователей и лидов (адаптированы под client_id) ---
     def save_user(self, user: User, client_id: int):
         try:
-            # Уникальность пользователя теперь определяется парой (user_id, client_id)
-            # Это значит, один и тот же человек может быть клиентом разных ботов на нашей платформе
+            # ИЗМЕНЕНИЕ: Указываем имя созданного нами ограничения для on_conflict
             self.client.table('users').upsert({
                 'user_id': user.id, 'username': user.username,
                 'first_name': user.first_name, 'utm_source': user.utm_source,
                 'client_id': client_id
-            }, on_conflict='user_id, client_id').execute()
+            }, on_conflict='users_client_id_user_id_key').execute()
             logger.info(f"User {user.id} for client {client_id} saved/updated in DB.")
-        except Exception as e: logger.error(f"Error saving user {user.id} for client {client_id}: {e}", exc_info=True)
+        except Exception as e: 
+            logger.error(f"Error saving user {user.id} for client {client_id}: {e}", exc_info=True)
 
+    # ... (остальные методы до конца файла остаются без изменений, но я привожу их для полноты)
     def get_user_category(self, user_id: int, client_id: int) -> str | None:
         try:
-            response = self.client.table('users').select('initial_request_category') \
-                .eq('user_id', user_id).eq('client_id', client_id).single().execute()
+            response = self.client.table('users').select('initial_request_category').eq('user_id', user_id).eq('client_id', client_id).single().execute()
             return response.data.get('initial_request_category')
         except Exception as e:
-            if "JSON object requested" not in str(e): # Игнорируем штатную ошибку "не найдено"
+            if "JSON object requested" not in str(e):
                  logger.error(f"Error getting user category for {user_id} (client {client_id}): {e}")
             return None
             
     def get_user_quiz_status(self, user_id: int, client_id: int) -> Tuple[bool, Dict | None]:
         try:
-            response = self.client.table('users').select('quiz_completed_at, quiz_results') \
-                .eq('user_id', user_id).eq('client_id', client_id).single().execute()
+            response = self.client.table('users').select('quiz_completed_at, quiz_results').eq('user_id', user_id).eq('client_id', client_id).single().execute()
             data = response.data
             if data and data.get('quiz_completed_at'):
-                # Результаты квиза хранятся как JSON-строка, парсим их
                 return True, json.loads(data.get('quiz_results')) if data.get('quiz_results') else None
         except Exception:
             pass
@@ -62,8 +56,7 @@ class SupabaseRepo:
 
     def update_user_category(self, user_id: int, category: str, client_id: int):
         try:
-            self.client.table('users').update({'initial_request_category': category}) \
-                .eq('user_id', user_id).eq('client_id', client_id).execute()
+            self.client.table('users').update({'initial_request_category': category}).eq('user_id', user_id).eq('client_id', client_id).execute()
             logger.info(f"Updated category for user {user_id} (client {client_id}) to '{category}'.")
         except Exception as e:
             logger.error(f"Error updating category for user {user_id} (client {client_id}): {e}", exc_info=True)
@@ -89,7 +82,6 @@ class SupabaseRepo:
             logger.info(f"Lead for user {lead.user_id} (client {client_id}) saved.")
         except Exception as e: logger.error(f"Error saving lead for {lead.user_id} (client {client_id}): {e}", exc_info=True)
 
-    # --- Методы для сообщений (адаптированы под client_id) ---
     def save_message(self, user_id: int, message: Message, client_id: int):
         try:
             self.client.table('messages').insert({
@@ -101,17 +93,13 @@ class SupabaseRepo:
 
     def get_recent_messages(self, user_id: int, client_id: int, limit: int = 4) -> List[Message]:
         try:
-            response = self.client.table('messages').select('role, content') \
-                .eq('user_id', user_id).eq('client_id', client_id).order('created_at', desc=True).limit(limit).execute()
+            response = self.client.table('messages').select('role, content').eq('user_id', user_id).eq('client_id', client_id).order('created_at', desc=True).limit(limit).execute()
             messages = [Message(role=item['role'], content=item['content']) for item in response.data]
             return list(reversed(messages))
         except Exception as e:
             logger.error(f"Error fetching messages for user {user_id} (client {client_id}): {e}", exc_info=True)
             return []
             
-    # --- RAG и Аналитика (требуют адаптации RPC-функций в SQL) ---
-    # Мы пока не можем их полностью реализовать, пока не обновим SQL-функции.
-    # Поэтому пока они будут возвращать пустые списки.
     def find_similar_chunks(self, embedding: List[float], client_id: int, match_threshold: float = 0.5, match_count: int = 3) -> List[Dict[str, Any]]:
         logger.warning("find_similar_chunks is not yet adapted for multi-tenancy RPC.")
         return []
