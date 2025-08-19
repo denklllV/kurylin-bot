@@ -86,11 +86,7 @@ async def main() -> None:
         logger.error("No active clients found. Shutting down.")
         return
 
-    # Создаем общий ExtBot. Он нужен для сервисов, которым требуется метод bot.send_message
-    # Мы используем токен первого клиента, но это не принципиально.
     generic_bot = ExtBot(token=clients[0]['bot_token'])
-
-    # Создаем общие инстансы сервисов
     ai_service = AIService(or_client, whisper_client, supabase_repo)
     lead_service = LeadService(supabase_repo, generic_bot)
     analytics_service = AnalyticsService(supabase_repo)
@@ -100,13 +96,10 @@ async def main() -> None:
         token = client['bot_token']
         app = Application.builder().token(token).build()
 
-        # Помещаем общие сервисы в bot_data всего приложения
         app.bot_data['ai_service'] = ai_service
         app.bot_data['lead_service'] = lead_service
         app.bot_data['analytics_service'] = analytics_service
         app.bot_data['last_debug_info'] = {}
-
-        # Добавляем уникальные для клиента данные
         app.bot_data['client_id'] = client['id']
         app.bot_data['manager_contact'] = client['manager_contact']
 
@@ -117,30 +110,28 @@ async def main() -> None:
     # --- 3. Настройка и запуск единого веб-сервера (диспетчера) ---
     if RUN_MODE == 'WEBHOOK':
         # Создаем "диспетчера", который будет принимать ВСЕ обновления
+        # Используем токен первого бота для инициализации, но это не имеет значения
         dispatcher_app = Application.builder().token(clients[0]['bot_token']).updater(None).build()
         dispatcher_app.add_handler(MessageHandler(filters.ALL, router_callback))
         
         async with dispatcher_app:
             await dispatcher_app.initialize()
-            for token in running_bots:
+            for token, app_instance in running_bots.items():
                 webhook_url = f"{PUBLIC_APP_URL}/{token}"
-                await running_bots[token].bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)
+                await app_instance.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)
                 logger.info(f"Webhook set for bot with token ending in ...{token[-4:]} to URL: {webhook_url}")
 
-            # Запускаем веб-сервер
+            # ИСПРАВЛЕНИЕ: Используем `run_server` вместо `start_webhook`
             logger.info(f"Starting shared webhook server on port {PORT}...")
-            await dispatcher_app.start_webhook(
-                listen="0.0.0.0",
+            await dispatcher_app.run_server(
+                host="0.0.0.0",
                 port=PORT,
-                url_path="", # Путь не важен, так как Telegram будет стучаться на /<TOKEN>
                 webhook_url=PUBLIC_APP_URL
             )
-            logger.info("Multi-tenant bot is operational.")
-            await asyncio.Event().wait() # Держим приложение живым
+            # Приложение будет работать, пока `run_server` активен. asyncio.Event().wait() не нужен.
 
     elif RUN_MODE == 'POLLING':
         logger.info("Starting all clients in POLLING mode...")
-        # В режиме POLLING мы просто запускаем все боты параллельно
         polling_tasks = [app.run_polling() for app in running_bots.values()]
         await asyncio.gather(*polling_tasks)
 
