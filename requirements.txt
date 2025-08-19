@@ -9,3 +9,4 @@ gspread==5.12.4
 oauth2client==4.1.3
 pymorphy3==1.2.1
 uvicorn
+fastapi

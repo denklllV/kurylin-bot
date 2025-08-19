@@ -3,10 +3,12 @@
 import sys
 import os
 import asyncio
+import uvicorn
 from typing import Dict
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
+from fastapi import FastAPI, Request, Response
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -25,34 +27,18 @@ from src.app.services.lead_service import LeadService
 from src.app.services.analytics_service import AnalyticsService
 from src.api.telegram import handlers
 
-# Глобальный кэш для хранения конфигураций клиентов: {token: client_data}
-client_config_cache: Dict[str, Dict] = {}
-
-async def context_injector_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """
-    Middleware: Определяет клиента по токену и "впрыскивает" его данные в context.
-    Это ключевая часть новой архитектуры.
-    """
-    token = context.bot.token
-    if token in client_config_cache:
-        client_data = client_config_cache[token]
-        # Важно: `bot_data` теперь будет уникальным для каждого запроса
-        context.bot_data['client_id'] = client_data['id']
-        context.bot_data['manager_contact'] = client_data['manager_contact']
-        return True # Разрешаем дальнейшую обработку
-    
-    logger.warning(f"Received update for an unknown bot token ending in ...{token[-4:]}")
-    return False # Блокируем обработку для неизвестных токенов
+# --- 1. Инициализация FastAPI и глобальных хранилищ ---
+fastapi_app = FastAPI(docs_url=None, redoc_url=None) # Отключаем авто-документацию
+bots: Dict[str, Application] = {}
+client_configs: Dict[str, Dict] = {}
 
 def register_handlers(app: Application):
-    """Регистрирует все обработчики для нашего единственного приложения."""
-    # Фильтры
+    """Регистрирует все обработчики для одного инстанса Application."""
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
     contact_button_filter = filters.Regex('^🧑‍💼 Связаться с человеком$')
     cancel_filter = filters.Regex('^Отмена$')
     quiz_button_filter = filters.Regex('^🎯 Квиз$')
 
-    # Обработчик анкеты
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(form_button_filter, handlers.start_form)],
         states={
@@ -64,86 +50,113 @@ def register_handlers(app: Application):
         fallbacks=[CommandHandler('cancel', handlers.cancel), MessageHandler(cancel_filter, handlers.cancel)],
     )
     
-    # Команды
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("stats", handlers.stats))
     app.add_handler(CommandHandler("last_answer", handlers.last_answer_debug))
     app.add_handler(CommandHandler("health_check", handlers.health_check))
     
-    # Обработчики инлайн-кнопок
     app.add_handler(CallbackQueryHandler(handlers.quiz_answer, pattern='^quiz_step_'))
     app.add_handler(CallbackQueryHandler(handlers.start_quiz_from_prompt, pattern='^start_quiz_from_prompt$'))
 
-    # Обработчики кнопок главного меню
     app.add_handler(MessageHandler(quiz_button_filter, handlers.start_quiz))
     app.add_handler(conv_handler)
     app.add_handler(MessageHandler(contact_button_filter, handlers.contact_human))
     
-    # Обработчики сообщений
     app.add_handler(MessageHandler(filters.VOICE, handlers.handle_voice_message))
     text_filter = filters.TEXT & ~filters.COMMAND & ~form_button_filter & ~contact_button_filter & ~quiz_button_filter
     app.add_handler(MessageHandler(text_filter, handlers.handle_text_message))
 
-async def main() -> None:
-    logger.info(f"Starting multi-tenant bot in {RUN_MODE} mode...")
+async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> Application:
+    """Создает, настраивает и инициализирует один инстанс бота."""
+    app = Application.builder().token(token).build()
+    
+    # Заполняем bot_data общими сервисами и уникальными данными клиента
+    app.bot_data.update(common_services)
+    app.bot_data['client_id'] = client_config['id']
+    app.bot_data['manager_contact'] = client_config['manager_contact']
+    
+    register_handlers(app)
+    
+    await app.initialize()
+    await app.start()
+    
+    if RUN_MODE == 'WEBHOOK':
+        webhook_url = f"{PUBLIC_APP_URL}/{token}"
+        if not (await app.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)):
+            logger.error(f"Failed to set webhook for bot ...{token[-4:]} to {webhook_url}")
+        else:
+            logger.info(f"Webhook set for bot ...{token[-4:]} to {webhook_url}")
 
+    return app
+
+# --- 2. Роут для приема вебхуков от Telegram ---
+@fastapi_app.post("/{bot_token}")
+async def handle_webhook(bot_token: str, request: Request):
+    """Единая точка входа для всех вебхуков."""
+    if bot_token in bots:
+        update_json = await request.json()
+        update = Update.de_json(update_json, bots[bot_token].bot)
+        await bots[bot_token].process_update(update)
+        return Response(status_code=200)
+    else:
+        logger.warning(f"Received update for unknown token ending in ...{bot_token[-4:]}")
+        return Response(status_code=404)
+
+# --- 3. Логика запуска и остановки ---
+@fastapi_app.on_event("startup")
+async def startup_event():
+    """Выполняется при старте FastAPI-приложения."""
+    logger.info("Application startup...")
+    
     supabase_repo = SupabaseRepo()
+    or_client = OpenRouterClient()
+    whisper_client = WhisperClient()
+    
+    # Создаем "пустышку" бота для сервисов, которым он нужен
+    generic_bot = ExtBot(token="12345:ABCDE") 
+    
+    common_services = {
+        'ai_service': AIService(or_client, whisper_client, supabase_repo),
+        'lead_service': LeadService(supabase_repo, generic_bot),
+        'analytics_service': AnalyticsService(supabase_repo),
+        'last_debug_info': {}
+    }
+
     clients = supabase_repo.get_active_clients()
     if not clients:
-        logger.error("No active clients found. Shutting down.")
+        logger.error("No active clients found. Application will not start any bots.")
         return
 
     for client in clients:
-        client_config_cache[client['bot_token']] = client
-
-    # --- Инициализация ЕДИНОГО Application ---
-    # Токен первого клиента используется только для инициализации
-    app = Application.builder().token(clients[0]['bot_token']).build()
-
-    # Вставляем наш middleware в группу -1, чтобы он выполнялся первым
-    app.add_handler(MessageHandler(filters.ALL, context_injector_middleware), group=-1)
-
-    register_handlers(app)
-
-    # Инициализация общих сервисов
-    or_client = OpenRouterClient()
-    whisper_client = WhisperClient()
-    generic_bot = ExtBot(token=clients[0]['bot_token'])
+        token = client['bot_token']
+        client_configs[token] = client
+        bot_app = await setup_bot(token, client, common_services)
+        bots[token] = bot_app
     
-    ai_service = AIService(or_client, whisper_client, supabase_repo)
-    lead_service = LeadService(supabase_repo, generic_bot)
-    analytics_service = AnalyticsService(supabase_repo)
+    logger.info(f"Initialized {len(bots)} bot(s).")
+    
+@fastapi_app.on_event("shutdown")
+async def shutdown_event():
+    """Выполняется при остановке FastAPI-приложения."""
+    logger.info("Application shutdown...")
+    for app in bots.values():
+        await app.stop()
+        await app.shutdown()
 
-    # Заполняем `application.bot_data` общими сервисами, которые будут доступны всем
-    app.bot_data['ai_service'] = ai_service
-    app.bot_data['lead_service'] = lead_service
-    app.bot_data['analytics_service'] = analytics_service
-    app.bot_data['last_debug_info'] = {}
+# --- 4. Основная точка входа для запуска сервера ---
+def main():
+    if RUN_MODE == 'POLLING':
+        logger.error("POLLING mode is not supported in this architecture. Please use WEBHOOK.")
+        return
 
-    if RUN_MODE == 'WEBHOOK':
-        await app.initialize()
-        for token in client_config_cache.keys():
-             webhook_url = f"{PUBLIC_APP_URL}/{token}"
-             temp_bot = ExtBot(token=token)
-             await temp_bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)
-             logger.info(f"Webhook set for bot ...{token[-4:]} to {webhook_url}")
-        
-        await app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=clients[0]['bot_token'], # Этот url_path используется для установки вебхука
-            webhook_url=PUBLIC_APP_URL
-        )
-    else: # POLLING
-        logger.info("Starting polling for all clients...")
-        await app.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("Starting Uvicorn server...")
+    uvicorn.run(
+        app=fastapi_app,
+        host="0.0.0.0",
+        port=PORT
+    )
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot shutdown requested.")
-    except Exception as e:
-        logger.error(f"An unhandled exception occurred in main: {e}", exc_info=True)
+    main()
 
 # END OF FILE: main.py
