@@ -28,7 +28,7 @@ class AIService:
         self.repo = repo
         self.system_prompt = self._load_system_prompt()
         self.disclaimer = "\n\nВажно: эта информация носит справочный характер и не является юридической консультацией."
-        logger.info("AIService initialized (RAG is DISABLED).")
+        logger.info("AIService initialized for multi-tenancy (RAG is DISABLED).")
 
     def classify_text(self, text: str) -> str | None:
         """Классифицирует текст запроса по заданным категориям."""
@@ -84,7 +84,6 @@ class AIService:
         """Собирает полный промпт, включая опциональный контекст из квиза."""
         system_prompt = self.system_prompt
         
-        # ИЗМЕНЕНИЕ: Динамически добавляем контекст квиза в системный промпт
         if quiz_context:
             system_prompt += (
                 "\n\n**ВАЖНО:** У тебя есть дополнительная информация о клиенте, "
@@ -112,16 +111,15 @@ class AIService:
         messages.append({"role": "user", "content": user_prompt_text})
         return messages
 
-    def get_text_response(self, user_id: int, user_question: str) -> tuple[str, dict]:
-        """Генерирует ответ, используя контекст из квиза (если он есть)."""
+    def get_text_response(self, user_id: int, user_question: str, client_id: int) -> tuple[str, dict]:
+        """Генерирует ответ, используя контекст из квиза (если он есть) для конкретного клиента."""
         start_time = time.time()
-        history = self.repo.get_recent_messages(user_id)
+        history = self.repo.get_recent_messages(user_id, client_id)
         
-        # ИЗМЕНЕНИЕ: Получаем данные квиза и формируем контекст
-        quiz_completed, quiz_results = self.repo.get_user_quiz_status(user_id)
+        quiz_completed, quiz_results = self.repo.get_user_quiz_status(user_id, client_id)
         quiz_context = None
         if quiz_completed and isinstance(quiz_results, dict):
-            logger.info(f"User {user_id} has quiz data. Adding it to context.")
+            logger.info(f"User {user_id} (client {client_id}) has quiz data. Adding it to context.")
             quiz_context = "\n".join([f"- {q}: {a}" for q, a in quiz_results.items()])
 
         rag_chunks = [] # RAG отключен
@@ -140,7 +138,7 @@ class AIService:
             "processing_time": f"{end_time - start_time:.2f}s"
         }
         
-        logger.info(f"Response generated (Quiz context used: {quiz_completed}). Time: {debug_info['processing_time']}.")
+        logger.info(f"Response generated for client {client_id} (Quiz context: {quiz_completed}). Time: {debug_info['processing_time']}.")
         
         final_response = response_text + self.disclaimer
         return final_response, debug_info
