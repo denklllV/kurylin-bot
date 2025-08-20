@@ -28,7 +28,7 @@ from src.app.services.analytics_service import AnalyticsService
 from src.api.telegram import handlers
 
 # --- 1. Инициализация FastAPI и глобальных хранилищ ---
-fastapi_app = FastAPI(docs_url=None, redoc_url=None) # Отключаем авто-документацию
+fastapi_app = FastAPI(docs_url=None, redoc_url=None)
 bots: Dict[str, Application] = {}
 client_configs: Dict[str, Dict] = {}
 
@@ -54,6 +54,9 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("stats", handlers.stats))
     app.add_handler(CommandHandler("last_answer", handlers.last_answer_debug))
     app.add_handler(CommandHandler("health_check", handlers.health_check))
+    # ИЗМЕНЕНИЕ: Добавляем новые админские команды
+    app.add_handler(CommandHandler("get_prompt", handlers.get_prompt))
+    app.add_handler(CommandHandler("set_prompt", handlers.set_prompt))
     
     app.add_handler(CallbackQueryHandler(handlers.quiz_answer, pattern='^quiz_step_'))
     app.add_handler(CallbackQueryHandler(handlers.start_quiz_from_prompt, pattern='^start_quiz_from_prompt$'))
@@ -70,11 +73,9 @@ async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> A
     """Создает, настраивает и инициализирует один инстанс бота."""
     app = Application.builder().token(token).build()
     
-    # Заполняем bot_data общими сервисами и уникальными данными клиента
     app.bot_data.update(common_services)
     app.bot_data['client_id'] = client_config['id']
     app.bot_data['manager_contact'] = client_config['manager_contact']
-    # ИЗМЕНЕНИЕ: Сохраняем конфигурацию квиза (может быть None) в контекст бота
     app.bot_data['quiz_data'] = client_config.get('quiz_data')
     
     register_handlers(app)
@@ -91,7 +92,6 @@ async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> A
 
     return app
 
-# --- 2. Роут для приема вебхуков от Telegram ---
 @fastapi_app.post("/{bot_token}")
 async def handle_webhook(bot_token: str, request: Request):
     """Единая точка входа для всех вебхуков."""
@@ -104,7 +104,6 @@ async def handle_webhook(bot_token: str, request: Request):
         logger.warning(f"Received update for unknown token ending in ...{bot_token[-4:]}")
         return Response(status_code=404)
 
-# --- 3. Логика запуска и остановки ---
 @fastapi_app.on_event("startup")
 async def startup_event():
     """Выполняется при старте FastAPI-приложения."""
@@ -114,7 +113,6 @@ async def startup_event():
     or_client = OpenRouterClient()
     whisper_client = WhisperClient()
     
-    # Создаем "пустышку" бота для сервисов, которым он нужен
     generic_bot = ExtBot(token="12345:ABCDE") 
     
     common_services = {
@@ -145,7 +143,6 @@ async def shutdown_event():
         await app.stop()
         await app.shutdown()
 
-# --- 4. Основная точка входа для запуска сервера ---
 def main():
     if RUN_MODE == 'POLLING':
         logger.error("POLLING mode is not supported in this architecture. Please use WEBHOOK.")
