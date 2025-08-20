@@ -6,15 +6,19 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 
 from src.shared.logger import logger
-from src.shared.config import GOOGLE_SHEET_ID, GOOGLE_CREDENTIALS_JSON
+# ИЗМЕНЕНИЕ: GOOGLE_SHEET_ID больше не нужен глобально
+from src.shared.config import GOOGLE_CREDENTIALS_JSON
 
 class GoogleSheetsClient:
-    def __init__(self):
+    # ИЗМЕНЕНИЕ: Конструктор теперь принимает sheet_id
+    def __init__(self, sheet_id: str):
+        if not sheet_id:
+            raise ValueError("Google Sheet ID is required.")
         self.scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        self.sheet = self._get_sheet()
-        logger.info("GoogleSheetsClient initialized.")
+        self.sheet = self._get_sheet(sheet_id)
+        logger.info(f"GoogleSheetsClient initialized for sheet_id: ...{sheet_id[-4:]}")
 
-    def _get_sheet(self):
+    def _get_sheet(self, sheet_id: str):
         """Подключается к Google Sheets и возвращает объект таблицы."""
         try:
             if not GOOGLE_CREDENTIALS_JSON:
@@ -24,9 +28,10 @@ class GoogleSheetsClient:
             creds_json = json.loads(GOOGLE_CREDENTIALS_JSON)
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, self.scope)
             client = gspread.authorize(creds)
-            return client.open_by_key(GOOGLE_SHEET_ID)
+            # ИЗМЕНЕНИЕ: Открываем таблицу по переданному ID
+            return client.open_by_key(sheet_id)
         except Exception as e:
-            logger.error(f"Error connecting to Google Sheets: {e}")
+            logger.error(f"Error connecting to Google Sheets for sheet_id ...{sheet_id[-4:]}: {e}")
             return None
 
     def _format_worksheet(self, worksheet):
@@ -37,7 +42,7 @@ class GoogleSheetsClient:
     def export_leads(self, leads_data: list, start_date_str: str = None, end_date_str: str = None) -> str:
         """Главная функция экспорта. Получает данные и записывает их в таблицу."""
         if not self.sheet:
-            return "Ошибка: Не удалось подключиться к Google Таблице. Проверьте логи."
+            return "Ошибка: Не удалось подключиться к Google Таблице. Проверьте права доступа и ID таблицы."
 
         if start_date_str and end_date_str:
             try:
@@ -71,15 +76,18 @@ class GoogleSheetsClient:
 
         rows_to_insert = [headers]
         for lead in leads_data:
-            created_time = datetime.fromisoformat(lead['created_at'].replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M:%S')
+            # Предполагаем, что RPC-функция будет возвращать created_at и utm_source
+            created_time_str = lead.get('created_at', '')
+            created_time = datetime.fromisoformat(created_time_str.replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M:%S') if created_time_str else 'N/A'
+            
             rows_to_insert.append([
                 created_time,
-                lead['user_id'],
-                lead['name'],
-                lead['debt_amount'],
-                lead['income_source'],
-                lead['region'],
-                lead.get('users', {}).get('utm_source', 'N/A')
+                lead.get('user_id', 'N/A'),
+                lead.get('name', 'N/A'),
+                lead.get('debt_amount', 'N/A'),
+                lead.get('income_source', 'N/A'),
+                lead.get('region', 'N/A'),
+                lead.get('utm_source', 'N/A')
             ])
         
         worksheet.append_rows(rows_to_insert, value_input_option='USER_ENTERED')

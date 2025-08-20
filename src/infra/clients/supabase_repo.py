@@ -15,7 +15,8 @@ class SupabaseRepo:
 
     def get_active_clients(self) -> List[Dict[str, Any]]:
         try:
-            select_query = 'id, client_name, bot_token, manager_contact, quiz_data'
+            # ИЗМЕНЕНИЕ: Добавляем google_sheet_id
+            select_query = 'id, client_name, bot_token, manager_contact, quiz_data, google_sheet_id'
             response = self.client.table('clients').select(select_query).eq('status', 'active').execute()
             logger.info(f"Loaded {len(response.data)} active client(s).")
             return response.data
@@ -23,6 +24,22 @@ class SupabaseRepo:
             logger.error(f"FATAL: Could not load clients from Supabase. Error: {e}", exc_info=True)
             return []
 
+    # НОВЫЙ МЕТОД: Получение данных для экспорта
+    def get_leads_for_export(self, client_id: int, start_date: str, end_date: str) -> List[Dict[str, Any]]:
+        """Вызывает RPC для получения лидов в диапазоне дат."""
+        try:
+            params = {
+                'p_client_id': client_id,
+                'p_start_date': start_date,
+                'p_end_date': end_date
+            }
+            response = self.client.rpc('get_leads_for_export', params).execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Error getting leads for export for client {client_id}: {e}", exc_info=True)
+            return []
+    
+    # ... (остальные методы без изменений)
     def get_client_bot_token(self, client_id: int) -> str | None:
         try:
             response = self.client.table('clients').select('bot_token').eq('id', client_id).single().execute()
@@ -65,7 +82,6 @@ class SupabaseRepo:
 
     def save_user(self, user: User, client_id: int):
         try:
-            # ИЗМЕНЕНИЕ: on_conflict теперь указывает на колонки, а не на имя ключа. Это надежнее.
             self.client.table('users').upsert({
                 'user_id': user.id, 'username': user.username,
                 'first_name': user.first_name, 'utm_source': user.utm_source,
