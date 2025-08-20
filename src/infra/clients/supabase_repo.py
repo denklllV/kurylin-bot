@@ -15,16 +15,39 @@ class SupabaseRepo:
 
     def get_active_clients(self) -> List[Dict[str, Any]]:
         try:
-            response = self.client.table('clients').select('id, client_name, bot_token, manager_contact').eq('status', 'active').execute()
+            # ИЗМЕНЕНИЕ: Добавляем `quiz_data` в список запрашиваемых полей.
+            select_query = 'id, client_name, bot_token, manager_contact, quiz_data'
+            response = self.client.table('clients').select(select_query).eq('status', 'active').execute()
             logger.info(f"Loaded {len(response.data)} active client(s).")
             return response.data
         except Exception as e:
             logger.error(f"FATAL: Could not load clients from Supabase. Error: {e}", exc_info=True)
             return []
 
+    def get_client_bot_token(self, client_id: int) -> str | None:
+        """Получает токен бота по ID клиента."""
+        try:
+            response = self.client.table('clients').select('bot_token').eq('id', client_id).single().execute()
+            if response.data:
+                return response.data.get('bot_token')
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching bot token for client {client_id}: {e}")
+            return None
+
+    def get_lead_user_ids_by_client(self, client_id: int) -> List[int]:
+        """Получает уникальные user_id из таблицы leads для конкретного client_id."""
+        try:
+            response = self.client.table('leads').select('user_id', count='exact').eq('client_id', client_id).execute()
+            user_ids = list(set(item['user_id'] for item in response.data))
+            logger.info(f"Found {len(user_ids)} unique lead user(s) for client {client_id}.")
+            return user_ids
+        except Exception as e:
+            logger.error(f"Error fetching lead user IDs for client {client_id}: {e}", exc_info=True)
+            return []
+
     def save_user(self, user: User, client_id: int):
         try:
-            # ИЗМЕНЕНИЕ: Указываем имя созданного нами ограничения для on_conflict
             self.client.table('users').upsert({
                 'user_id': user.id, 'username': user.username,
                 'first_name': user.first_name, 'utm_source': user.utm_source,
@@ -34,7 +57,6 @@ class SupabaseRepo:
         except Exception as e: 
             logger.error(f"Error saving user {user.id} for client {client_id}: {e}", exc_info=True)
 
-    # ... (методы с save_user по get_recent_messages остаются без изменений) ...
     def get_user_category(self, user_id: int, client_id: int) -> str | None:
         try:
             response = self.client.table('users').select('initial_request_category').eq('user_id', user_id).eq('client_id', client_id).single().execute()
@@ -101,7 +123,6 @@ class SupabaseRepo:
             return []
             
     def find_similar_chunks(self, embedding: List[float], client_id: int, match_threshold: float = 0.5, match_count: int = 3) -> List[Dict[str, Any]]:
-        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
         try:
             params = {
                 'p_query_embedding': embedding,
@@ -116,7 +137,6 @@ class SupabaseRepo:
             return []
 
     def get_analytics_by_source(self, client_id: int) -> List[Dict[str, Any]]:
-        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
         try:
             response = self.client.rpc('get_leads_by_source', {'p_client_id': client_id}).execute()
             return response.data
@@ -125,7 +145,6 @@ class SupabaseRepo:
             return []
             
     def get_analytics_by_region(self, client_id: int) -> List[Dict[str, Any]]:
-        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
         try:
             response = self.client.rpc('get_leads_by_region', {'p_client_id': client_id}).execute()
             return response.data
@@ -134,7 +153,6 @@ class SupabaseRepo:
             return []
 
     def get_analytics_by_day_of_week(self, client_id: int) -> List[Dict[str, Any]]:
-        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
         try:
             response = self.client.rpc('get_leads_by_day_of_week', {'p_client_id': client_id}).execute()
             return response.data
@@ -143,7 +161,6 @@ class SupabaseRepo:
             return []
 
     def get_analytics_by_category(self, client_id: int) -> List[Dict[str, Any]]:
-        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
         try:
             response = self.client.rpc('get_users_by_category', {'p_client_id': client_id}).execute()
             return response.data
