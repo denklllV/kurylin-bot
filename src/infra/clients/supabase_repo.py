@@ -34,7 +34,7 @@ class SupabaseRepo:
         except Exception as e: 
             logger.error(f"Error saving user {user.id} for client {client_id}: {e}", exc_info=True)
 
-    # ... (остальные методы до конца файла остаются без изменений, но я привожу их для полноты)
+    # ... (методы с save_user по get_recent_messages остаются без изменений) ...
     def get_user_category(self, user_id: int, client_id: int) -> str | None:
         try:
             response = self.client.table('users').select('initial_request_category').eq('user_id', user_id).eq('client_id', client_id).single().execute()
@@ -101,23 +101,54 @@ class SupabaseRepo:
             return []
             
     def find_similar_chunks(self, embedding: List[float], client_id: int, match_threshold: float = 0.5, match_count: int = 3) -> List[Dict[str, Any]]:
-        logger.warning("find_similar_chunks is not yet adapted for multi-tenancy RPC.")
-        return []
+        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
+        try:
+            params = {
+                'p_query_embedding': embedding,
+                'p_match_threshold': match_threshold,
+                'p_match_count': match_count,
+                'p_client_id': client_id
+            }
+            response = self.client.rpc('match_documents', params).execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Error finding similar chunks for client {client_id}: {e}", exc_info=True)
+            return []
 
     def get_analytics_by_source(self, client_id: int) -> List[Dict[str, Any]]:
-        logger.warning("get_analytics_by_source is not yet adapted for multi-tenancy RPC.")
-        return []
+        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
+        try:
+            response = self.client.rpc('get_leads_by_source', {'p_client_id': client_id}).execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Error getting analytics by source for client {client_id}: {e}", exc_info=True)
+            return []
             
     def get_analytics_by_region(self, client_id: int) -> List[Dict[str, Any]]:
-        logger.warning("get_analytics_by_region is not yet adapted for multi-tenancy RPC.")
-        return []
+        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
+        try:
+            response = self.client.rpc('get_leads_by_region', {'p_client_id': client_id}).execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Error getting analytics by region for client {client_id}: {e}", exc_info=True)
+            return []
 
     def get_analytics_by_day_of_week(self, client_id: int) -> List[Dict[str, Any]]:
-        logger.warning("get_analytics_by_day_of_week is not yet adapted for multi-tenancy RPC.")
-        return []
+        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
+        try:
+            response = self.client.rpc('get_leads_by_day_of_week', {'p_client_id': client_id}).execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Error getting analytics by day of week for client {client_id}: {e}", exc_info=True)
+            return []
 
     def get_analytics_by_category(self, client_id: int) -> List[Dict[str, Any]]:
-        logger.warning("get_analytics_by_category is not yet adapted for multi-tenancy RPC.")
-        return []
+        # ИЗМЕНЕНИЕ: Вызываем обновленную RPC-функцию с client_id
+        try:
+            response = self.client.rpc('get_users_by_category', {'p_client_id': client_id}).execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Error getting analytics by category for client {client_id}: {e}", exc_info=True)
+            return []
 
 # END OF FILE: src/infra/clients/supabase_repo.py
