@@ -44,7 +44,7 @@ def register_handlers(app: Application):
     stats_button_filter = filters.Regex('^📊 Статистика$')
     export_button_filter = filters.Regex('^📤 Экспорт лидов$')
     prompt_menu_button_filter = filters.Regex('^📜 Управление промптом$')
-    broadcast_menu_button_filter = filters.Regex('^ BROADCAST Рассылка$')
+    broadcast_menu_button_filter = filters.Regex('^📣 Рассылка$')
     debug_button_filter = filters.Regex('^🕵️‍♂️ Отладка ответа$')
 
     conv_handler = ConversationHandler(
@@ -87,6 +87,7 @@ def register_handlers(app: Application):
     app.add_handler(MessageHandler(contact_button_filter, handlers.contact_human))
     app.add_handler(MessageHandler(filters.VOICE, handlers.handle_voice_message))
     
+    # --- Фильтр для обычных текстовых сообщений (должен быть в конце) ---
     text_filter = (
         filters.TEXT & ~filters.COMMAND & ~form_button_filter & 
         ~contact_button_filter & ~quiz_button_filter & ~stats_button_filter &
@@ -102,7 +103,6 @@ async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> A
     app.bot_data['client_id'] = client_config['id']
     app.bot_data['manager_contact'] = client_config['manager_contact']
     app.bot_data['quiz_data'] = client_config.get('quiz_data')
-    # Добавляем ID таблицы в контекст
     app.bot_data['google_sheet_id'] = client_config.get('google_sheet_id')
     
     register_handlers(app)
