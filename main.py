@@ -45,7 +45,6 @@ def register_handlers(app: Application):
     broadcast_menu_button_filter = filters.Regex('^📣 Рассылка$')
     debug_button_filter = filters.Regex('^🕵️‍♂️ Отладка ответа$')
 
-    # --- Обработчик анкеты ---
     form_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(form_button_filter, handlers.start_form)],
         states={
@@ -57,14 +56,14 @@ def register_handlers(app: Application):
         fallbacks=[CommandHandler('cancel', handlers.cancel), MessageHandler(cancel_filter, handlers.cancel)],
     )
 
-    # --- Обработчик Мастера Рассылок ---
     broadcast_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(broadcast_menu_button_filter, handlers.broadcast_start)],
         states={
             GET_BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.broadcast_get_message)],
             GET_BROADCAST_MEDIA: [
                 CallbackQueryHandler(handlers.broadcast_skip_media, pattern='^broadcast_skip_media$'),
-                MessageHandler(filters.PHOTO | filters.DOCUMENT, handlers.broadcast_get_media)
+                # ИЗМЕНЕНИЕ: Исправляем filters.DOCUMENT на filters.Document.ALL
+                MessageHandler(filters.PHOTO | filters.Document.ALL, handlers.broadcast_get_media)
             ],
             CONFIRM_BROADCAST: [
                 MessageHandler(filters.Regex('^✅ Отправить всем$'), handlers.broadcast_send),
@@ -74,7 +73,6 @@ def register_handlers(app: Application):
         fallbacks=[CommandHandler('cancel', handlers.broadcast_cancel), MessageHandler(cancel_filter, handlers.broadcast_cancel)],
     )
     
-    # --- Регистрация команд ---
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("admin", handlers.admin_panel))
     app.add_handler(CommandHandler("stats", handlers.stats))
@@ -83,22 +81,20 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("health_check", handlers.health_check))
     app.add_handler(CommandHandler("get_prompt", handlers.get_prompt))
     app.add_handler(CommandHandler("set_prompt", handlers.set_prompt))
-    # Старые команды broadcast УДАЛЕНЫ
 
-    # --- Кнопки админ-панели (кроме тех, что запускают диалоги) ---
     app.add_handler(MessageHandler(stats_button_filter, handlers.stats))
     app.add_handler(MessageHandler(export_button_filter, handlers.export_leads))
+    # УДАЛЕНО: Эти кнопки теперь запускают диалог или просто подсказывают
+    # app.add_handler(MessageHandler(prompt_menu_button_filter, handlers.prompt_management_menu))
+    # app.add_handler(MessageHandler(broadcast_menu_button_filter, handlers.broadcast_menu))
     app.add_handler(MessageHandler(debug_button_filter, handlers.last_answer_debug))
 
-    # --- Инлайн-кнопки ---
     app.add_handler(CallbackQueryHandler(handlers.quiz_answer, pattern='^quiz_step_'))
     app.add_handler(CallbackQueryHandler(handlers.start_quiz_from_prompt, pattern='^start_quiz_from_prompt$'))
 
-    # --- Диалоговые обработчики ---
     app.add_handler(form_conv_handler)
-    app.add_handler(broadcast_conv_handler) # <-- НАШ НОВЫЙ МАСТЕР
+    app.add_handler(broadcast_conv_handler)
 
-    # --- Обычные кнопки и сообщения ---
     app.add_handler(MessageHandler(quiz_button_filter, handlers.start_quiz))
     app.add_handler(MessageHandler(contact_button_filter, handlers.contact_human))
     app.add_handler(MessageHandler(filters.VOICE, handlers.handle_voice_message))
@@ -107,7 +103,7 @@ def register_handlers(app: Application):
         filters.TEXT & ~filters.COMMAND & ~form_button_filter & 
         ~contact_button_filter & ~quiz_button_filter & ~stats_button_filter &
         ~export_button_filter & ~broadcast_menu_button_filter & ~debug_button_filter &
-        ~filters.Regex('^✅ Отправить всем$') & ~filters.Regex('^📝 Редактировать$') & cancel_filter
+        ~filters.Regex('^✅ Отправить всем$') & ~filters.Regex('^📝 Редактировать$') & ~cancel_filter
     )
     app.add_handler(MessageHandler(text_filter, handlers.handle_text_message))
 
