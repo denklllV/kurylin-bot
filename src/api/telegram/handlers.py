@@ -208,9 +208,6 @@ async def last_answer_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     client_id, _ = get_client_context(context)
-    if not client_id:
-        await update.message.reply_text("Не удалось определить ID клиента. Операция невозможна.")
-        return
     analytics_service: AnalyticsService = context.application.bot_data['analytics_service']
     await update.message.reply_chat_action(ChatAction.TYPING)
     report = analytics_service.generate_summary_report(client_id)
@@ -262,7 +259,7 @@ async def export_leads(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lead_service: LeadService = context.application.bot_data['lead_service']
     start_date_str, end_date_str = None, None
-    if len(context.args) == 2:
+    if context.args and len(context.args) == 2:
         start_date_str, end_date_str = context.args[0], context.args[1]
     try:
         if start_date_str is None:
@@ -278,6 +275,14 @@ async def export_leads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to export leads for client {client_id}: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Произошла ошибка при экспорте: {e}")
+
+async def quiz_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update, context): return
+    await update.message.reply_text(
+        "<b>Управление квизом:</b>\n\n"
+        "Эта функция находится в разработке. Скоро здесь можно будет создавать, редактировать и удалять квизы прямо из Telegram.",
+        parse_mode=ParseMode.HTML
+    )
 
 # --- Мастер Рассылок ---
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -307,10 +312,8 @@ async def broadcast_get_media(update: Update, context: ContextTypes.DEFAULT_TYPE
         media_type, file_id = 'photo', message.photo[-1].file_id
     elif message.document:
         media_type, file_id = 'document', message.document.file_id
-    
     context.user_data['broadcast_media_type'] = media_type
     context.user_data['broadcast_media_file_id'] = file_id
-
     await update.message.reply_text("Медиафайл получен. Теперь давайте посмотрим, что получилось.")
     await broadcast_preview(update, context)
     return CONFIRM_BROADCAST
@@ -326,9 +329,7 @@ async def broadcast_preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_text = context.user_data.get('broadcast_message')
     media_type = context.user_data.get('broadcast_media_type')
     file_id = context.user_data.get('broadcast_media_file_id')
-
     await update.effective_message.reply_text("<b>Шаг 3/3: Предпросмотр.</b>\n\nВаши пользователи получат это:", parse_mode=ParseMode.HTML)
-    
     try:
         if media_type == 'photo':
             await update.effective_message.reply_photo(photo=file_id, caption=message_text, parse_mode=ParseMode.HTML)
@@ -338,26 +339,19 @@ async def broadcast_preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text(message_text, parse_mode=ParseMode.HTML)
     except Exception as e:
         await update.effective_message.reply_text(f"❌ Ошибка предпросмотра: {e}\n\nПохоже, текст слишком длинный для подписи или содержит неверное форматирование.")
-
     await update.effective_message.reply_text("Теперь выберите действие:", reply_markup=broadcast_confirm_keyboard)
 
 async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     client_id, _ = get_client_context(context)
     lead_service: LeadService = context.application.bot_data['lead_service']
-    
     job_context = {
         'bot': context.bot, 'client_id': client_id, 'admin_chat_id': update.effective_chat.id,
         'message': context.user_data.get('broadcast_message'),
         'media_type': context.user_data.get('broadcast_media_type'),
         'media_file_id': context.user_data.get('broadcast_media_file_id')
     }
-    
     context.job_queue.run_once(lead_service._broadcast_message_task, when=1, data=job_context, name=f"broadcast_{client_id}_{update.update_id}")
-    
-    await update.message.reply_text(
-        f"✅ Рассылка для клиента ID {client_id} запущена. Вы получите отчет по завершении.",
-        reply_markup=admin_keyboard
-    )
+    await update.message.reply_text(f"✅ Рассылка для клиента ID {client_id} запущена. Вы получите отчет по завершении.", reply_markup=admin_keyboard)
     context.user_data.clear()
     return ConversationHandler.END
 

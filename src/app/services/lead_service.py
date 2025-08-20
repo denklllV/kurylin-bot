@@ -23,7 +23,6 @@ class LeadService:
             income_source=lead_data.get('income'), region=lead_data.get('region')
         )
         self.repo.save_lead(lead, client_id)
-        # ИЗМЕНЕНИЕ: Передаем правильный bot-инстанс в _notify_manager_on_lead
         await self._notify_manager_on_lead(user, lead, manager_contact, self.bot)
 
     async def _notify_manager_on_lead(self, user: User, lead: Lead, manager_contact: str, bot: Bot):
