@@ -26,9 +26,10 @@ class AIService:
         self.or_client = or_client
         self.whisper_client = whisper_client
         self.repo = repo
-        self.system_prompt = self._load_system_prompt()
+        # ИЗМЕНЕНИЕ: Удаляем статический промпт. Он теперь будет загружаться динамически.
+        # self.system_prompt = self._load_system_prompt()
         self.disclaimer = "\n\nВажно: эта информация носит справочный характер и не является юридической консультацией."
-        logger.info("AIService initialized for multi-tenancy (RAG is DISABLED).")
+        logger.info("AIService initialized with DYNAMIC system prompts.")
 
     def classify_text(self, text: str) -> str | None:
         """Классифицирует текст запроса по заданным категориям."""
@@ -69,30 +70,23 @@ class AIService:
             logger.error(f"Failed to classify text: {e}", exc_info=True)
             return "Общая консультация"
 
-    def _load_system_prompt(self) -> str:
-        """Загружает и возвращает базовый системный промпт."""
-        return (
-            "Ты — юрист-консультант по банкротству Вячеслав Курилин. Твоя речь — человечная, мягкая и уверенная. Твоя задача — помочь клиенту.\n\n"
-            "**СТРОГИЕ ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:**\n"
-            "1. **ТЕМАТИКА:** Ты отвечаешь **ТОЛЬКО** на вопросы, связанные с долгами, кредитами, финансами и процедурой банкротства в РФ. Если вопрос не по теме, ты **ОБЯЗАН** вежливо ответить: 'К сожалению, я специализируюсь только на вопросах, связанных с финансами и процедурой банкротства. Я не могу ответить на этот вопрос.'\n"
-            "2. **БЕЗОПАСНОСТЬ:** Если предоставленной информации (в истории диалога или в базе знаний) недостаточно для точного ответа, или вопрос касается очень специфической, узкой ситуации, ты **ОБЯЗАН** ответить: 'Чтобы дать точный ответ по вашей ситуации, мне недостаточно информации. Рекомендую вам напрямую связаться со специалистом для детального разбора.'\n"
-            "3. **ПРИОРИТЕТ КОНТЕКСТА:** Если факты из базы знаний (RAG) противоречат предыдущей истории диалога, **приоритет всегда у фактов из базы знаний**.\n"
-            "4. **ЧИСТОТА ОТВЕТА:** В твоем ответе не должно быть никаких служебных слов вроде 'Ответ:'. Сразу начинай отвечать по существу.\n"
-        )
+    # ИЗМЕНЕНИЕ: Удаляем метод _load_system_prompt, так как он больше не нужен.
+    
+    # ИЗМЕНЕНИЕ: Метод теперь принимает system_prompt как аргумент.
+    def _build_rag_prompt(self, system_prompt: str, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]], quiz_context: str = None) -> List[Dict[str, str]]:
+        """Собирает полный промпт, используя предоставленный system_prompt."""
         
-    def _build_rag_prompt(self, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]], quiz_context: str = None) -> List[Dict[str, str]]:
-        """Собирает полный промпт, включая опциональный контекст из квиза."""
-        system_prompt = self.system_prompt
+        current_system_prompt = system_prompt
         
         if quiz_context:
-            system_prompt += (
+            current_system_prompt += (
                 "\n\n**ВАЖНО:** У тебя есть дополнительная информация о клиенте, "
                 "полученная из квиза. Обязательно используй её для более точного "
                 "и персонализированного ответа.\n"
                 f"--- КОНТЕКСТ КЛИЕНТА ---\n{quiz_context}\n--- КОНЕЦ КОНТЕКСТА ---"
             )
 
-        messages = [{"role": "system", "content": system_prompt}]
+        messages = [{"role": "system", "content": current_system_prompt}]
         
         if history:
             history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
@@ -112,8 +106,15 @@ class AIService:
         return messages
 
     def get_text_response(self, user_id: int, user_question: str, client_id: int) -> tuple[str, dict]:
-        """Генерирует ответ, используя контекст из квиза (если он есть) для конкретного клиента."""
+        """Генерирует ответ, используя динамический системный промпт и контекст квиза для клиента."""
         start_time = time.time()
+        
+        # ИЗМЕНЕНИЕ: Динамически загружаем системный промпт для текущего клиента.
+        system_prompt = self.repo.get_client_system_prompt(client_id)
+        if not system_prompt:
+            logger.error(f"Could not retrieve system prompt for client {client_id}. Using a safe fallback.")
+            system_prompt = "Ты — полезный ассистент. Отвечай на вопросы кратко и по делу."
+
         history = self.repo.get_recent_messages(user_id, client_id)
         
         quiz_completed, quiz_results = self.repo.get_user_quiz_status(user_id, client_id)
@@ -124,7 +125,8 @@ class AIService:
 
         rag_chunks = [] # RAG отключен
         
-        messages_to_send = self._build_rag_prompt(user_question, history, rag_chunks, quiz_context)
+        # ИЗМЕНЕНИЕ: Передаем загруженный промпт в сборщик.
+        messages_to_send = self._build_rag_prompt(system_prompt, user_question, history, rag_chunks, quiz_context)
         raw_response_text = self.or_client.get_chat_completion(messages_to_send)
         response_text = strip_all_html_tags(raw_response_text)
         end_time = time.time()
