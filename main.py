@@ -74,6 +74,8 @@ async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> A
     app.bot_data.update(common_services)
     app.bot_data['client_id'] = client_config['id']
     app.bot_data['manager_contact'] = client_config['manager_contact']
+    # ИЗМЕНЕНИЕ: Сохраняем конфигурацию квиза (может быть None) в контекст бота
+    app.bot_data['quiz_data'] = client_config.get('quiz_data')
     
     register_handlers(app)
     
