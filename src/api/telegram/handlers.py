@@ -11,10 +11,7 @@ from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
 from src.app.services.analytics_service import AnalyticsService
 from src.domain.models import User, Message
-# ИЗМЕНЕНИЕ: Импортируем get_main_keyboard вместо статической переменной
 from src.api.telegram.keyboards import get_main_keyboard, cancel_keyboard, make_quiz_keyboard
-# ИЗМЕНЕНИЕ: Удаляем импорт статического файла с данными квиза
-# from src.api.telegram.quiz_data import QUIZ_DATA
 from src.shared.logger import logger
 from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 
@@ -45,11 +42,9 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text), client_id)
     
     quiz_completed, _ = ai_service.repo.get_user_quiz_status(user_id, client_id)
-    # ИЗМЕНЕНИЕ: Используем динамическую клавиатуру по умолчанию
     reply_markup = get_main_keyboard(context)
     parse_mode = None 
     
-    # ИЗМЕНЕНИЕ: Предлагаем квиз, только если он есть у клиента и еще не пройден
     quiz_data = context.bot_data.get('quiz_data')
     if quiz_data and not quiz_completed:
         quiz_prompt_keyboard = InlineKeyboardMarkup([
@@ -76,7 +71,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '📝 Чтобы начать анкету, нажмите кнопку ниже.\n'
         '🎯 Пройдите квиз, чтобы получить точную оценку.\n'
         '❓ Чтобы задать вопрос, просто напишите его в этот чат.',
-        # ИЗМЕНЕНИЕ: Используем динамическую клавиатуру
         reply_markup=get_main_keyboard(context)
     )
 
@@ -118,12 +112,10 @@ async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client_id, _ = get_client_context(context)
     quiz_data = context.bot_data.get('quiz_data')
-
     if not quiz_data:
         logger.warning(f"User {update.effective_user.id} tried to start a quiz, but it is disabled for client {client_id}.")
         await update.message.reply_text("К сожалению, квиз в данный момент недоступен.", reply_markup=get_main_keyboard(context))
         return
-
     context.user_data['quiz_answers'] = {}
     step = 0
     question_data = quiz_data[step]
@@ -133,24 +125,20 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     client_id, manager_contact = get_client_context(context)
     quiz_data = context.bot_data.get('quiz_data')
     if not quiz_data:
         logger.error(f"Quiz answer received, but no quiz_data in context for client {client_id}.")
         await query.edit_message_text(text="Произошла ошибка: структура квиза не найдена.")
         return
-
     lead_service: LeadService = context.application.bot_data['lead_service']
     parts = query.data.split('_')
     step = int(parts[2])
     answer_index = int(parts[4])
-    
     question_data = quiz_data[step]
     answer_data = question_data["answers"][answer_index]
     question_text = re.sub(r'^\d+/\d+\.\s*', '', question_data["question"])
     context.user_data.setdefault('quiz_answers', {})[question_text] = answer_data["text"]
-    
     next_step = step + 1
     if next_step < len(quiz_data):
         next_question_data = quiz_data[next_step]
@@ -167,7 +155,6 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     client_id, _ = get_client_context(context)
     quiz_data = context.bot_data.get('quiz_data')
     if not quiz_data:
@@ -175,7 +162,6 @@ async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_reply_markup(reply_markup=None)
         await query.message.reply_text("К сожалению, квиз в данный момент недоступен.")
         return
-
     await query.edit_message_reply_markup(reply_markup=None)
     context.user_data['quiz_answers'] = {}
     step = 0
@@ -216,6 +202,43 @@ async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     client_id, _ = get_client_context(context)
     await update.message.reply_text(f"✅ Бот в сети. ID клиента: {client_id}.")
+
+async def get_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update, context): return
+    client_id, _ = get_client_context(context)
+    ai_service: AIService = context.application.bot_data['ai_service']
+    
+    current_prompt = ai_service.repo.get_client_system_prompt(client_id)
+    
+    if current_prompt:
+        response_text = f"<b>Текущий системный промпт (Клиент ID: {client_id}):</b>\n\n<pre>{current_prompt}</pre>"
+        await update.message.reply_text(response_text, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text("Не удалось получить системный промпт.")
+
+async def set_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update, context): return
+    client_id, _ = get_client_context(context)
+    ai_service: AIService = context.application.bot_data['ai_service']
+
+    if not context.args:
+        await update.message.reply_text(
+            "<b>Ошибка:</b> вы не указали текст промпта.\n\n"
+            "<b>Пример использования:</b>\n"
+            "/set_prompt Ты — весёлый пират-юрист. Твоя задача — консультировать по вопросам банкротства на пиратском сленге.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    new_prompt = " ".join(context.args)
+    
+    success = ai_service.repo.update_client_system_prompt(client_id, new_prompt)
+    
+    if success:
+        await update.message.reply_text("✅ Системный промпт успешно обновлен!")
+        await get_prompt(update, context)
+    else:
+        await update.message.reply_text("❌ Произошла ошибка при обновлении промпта. Посмотрите логи сервера.")
 
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Отлично! Приступаем к заполнению анкеты.\n\nКак я могу к вам обращаться?", reply_markup=cancel_keyboard)
