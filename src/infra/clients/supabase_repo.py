@@ -15,7 +15,6 @@ class SupabaseRepo:
 
     def get_active_clients(self) -> List[Dict[str, Any]]:
         try:
-            # ИЗМЕНЕНИЕ: Добавляем `quiz_data` в список запрашиваемых полей.
             select_query = 'id, client_name, bot_token, manager_contact, quiz_data'
             response = self.client.table('clients').select(select_query).eq('status', 'active').execute()
             logger.info(f"Loaded {len(response.data)} active client(s).")
@@ -46,6 +45,30 @@ class SupabaseRepo:
             logger.error(f"Error fetching lead user IDs for client {client_id}: {e}", exc_info=True)
             return []
 
+    # НОВЫЙ МЕТОД: Получает системный промпт для клиента
+    def get_client_system_prompt(self, client_id: int) -> str | None:
+        """Получает системный промпт по ID клиента."""
+        try:
+            response = self.client.table('clients').select('system_prompt').eq('id', client_id).single().execute()
+            if response.data and response.data.get('system_prompt'):
+                return response.data['system_prompt']
+            logger.warning(f"System prompt not found or is empty for client {client_id}.")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching system prompt for client {client_id}: {e}", exc_info=True)
+            return None
+
+    # НОВЫЙ МЕТОД: Обновляет системный промпт для клиента
+    def update_client_system_prompt(self, client_id: int, new_prompt: str) -> bool:
+        """Обновляет системный промпт для указанного клиента."""
+        try:
+            self.client.table('clients').update({'system_prompt': new_prompt}).eq('id', client_id).execute()
+            logger.info(f"System prompt for client {client_id} has been updated.")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating system prompt for client {client_id}: {e}", exc_info=True)
+            return False
+
     def save_user(self, user: User, client_id: int):
         try:
             self.client.table('users').upsert({
@@ -54,7 +77,7 @@ class SupabaseRepo:
                 'client_id': client_id
             }, on_conflict='users_client_id_user_id_key').execute()
             logger.info(f"User {user.id} for client {client_id} saved/updated in DB.")
-        except Exception as e: 
+        except Exception as e:
             logger.error(f"Error saving user {user.id} for client {client_id}: {e}", exc_info=True)
 
     def get_user_category(self, user_id: int, client_id: int) -> str | None:
@@ -65,7 +88,7 @@ class SupabaseRepo:
             if "JSON object requested" not in str(e):
                  logger.error(f"Error getting user category for {user_id} (client {client_id}): {e}")
             return None
-            
+
     def get_user_quiz_status(self, user_id: int, client_id: int) -> Tuple[bool, Dict | None]:
         try:
             response = self.client.table('users').select('quiz_completed_at, quiz_results').eq('user_id', user_id).eq('client_id', client_id).single().execute()
@@ -82,7 +105,7 @@ class SupabaseRepo:
             logger.info(f"Updated category for user {user_id} (client {client_id}) to '{category}'.")
         except Exception as e:
             logger.error(f"Error updating category for user {user_id} (client {client_id}): {e}", exc_info=True)
-            
+
     def save_quiz_results(self, user_id: int, results: Dict, client_id: int):
         try:
             results_json = json.dumps(results, ensure_ascii=False)
@@ -121,7 +144,7 @@ class SupabaseRepo:
         except Exception as e:
             logger.error(f"Error fetching messages for user {user_id} (client {client_id}): {e}", exc_info=True)
             return []
-            
+
     def find_similar_chunks(self, embedding: List[float], client_id: int, match_threshold: float = 0.5, match_count: int = 3) -> List[Dict[str, Any]]:
         try:
             params = {
@@ -143,7 +166,7 @@ class SupabaseRepo:
         except Exception as e:
             logger.error(f"Error getting analytics by source for client {client_id}: {e}", exc_info=True)
             return []
-            
+
     def get_analytics_by_region(self, client_id: int) -> List[Dict[str, Any]]:
         try:
             response = self.client.rpc('get_leads_by_region', {'p_client_id': client_id}).execute()
