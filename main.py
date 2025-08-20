@@ -34,10 +34,16 @@ client_configs: Dict[str, Dict] = {}
 
 def register_handlers(app: Application):
     """Регистрирует все обработчики для одного инстанса Application."""
+    # --- Фильтры для кнопок ---
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
     contact_button_filter = filters.Regex('^🧑‍💼 Связаться с человеком$')
     cancel_filter = filters.Regex('^Отмена$')
     quiz_button_filter = filters.Regex('^🎯 Квиз$')
+    
+    # --- Новые фильтры для кнопок админ-панели ---
+    stats_button_filter = filters.Regex('^📊 Статистика')
+    debug_button_filter = filters.Regex('^🕵️‍♂️ Отладка')
+    prompt_button_filter = filters.Regex('^📜 Показать промпт')
 
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(form_button_filter, handlers.start_form)],
@@ -50,23 +56,41 @@ def register_handlers(app: Application):
         fallbacks=[CommandHandler('cancel', handlers.cancel), MessageHandler(cancel_filter, handlers.cancel)],
     )
     
+    # --- Регистрация команд ---
     app.add_handler(CommandHandler("start", handlers.start))
+    
+    # --- Админские команды ---
+    app.add_handler(CommandHandler("admin", handlers.admin_panel))
     app.add_handler(CommandHandler("stats", handlers.stats))
     app.add_handler(CommandHandler("last_answer", handlers.last_answer_debug))
     app.add_handler(CommandHandler("health_check", handlers.health_check))
-    # ИЗМЕНЕНИЕ: Добавляем новые админские команды
     app.add_handler(CommandHandler("get_prompt", handlers.get_prompt))
     app.add_handler(CommandHandler("set_prompt", handlers.set_prompt))
-    
+    app.add_handler(CommandHandler("broadcast", handlers.broadcast_real))
+    app.add_handler(CommandHandler("broadcast_dry_run", handlers.broadcast_dry_run))
+
+    # --- Обработчики кнопок админ-панели ---
+    app.add_handler(MessageHandler(stats_button_filter, handlers.stats))
+    app.add_handler(MessageHandler(debug_button_filter, handlers.last_answer_debug))
+    app.add_handler(MessageHandler(prompt_button_filter, handlers.get_prompt))
+
+    # --- Обработчики колбэков (инлайн-кнопки) ---
     app.add_handler(CallbackQueryHandler(handlers.quiz_answer, pattern='^quiz_step_'))
     app.add_handler(CallbackQueryHandler(handlers.start_quiz_from_prompt, pattern='^start_quiz_from_prompt$'))
 
+    # --- Обработчики кнопок и сообщений ---
     app.add_handler(MessageHandler(quiz_button_filter, handlers.start_quiz))
     app.add_handler(conv_handler)
     app.add_handler(MessageHandler(contact_button_filter, handlers.contact_human))
     
     app.add_handler(MessageHandler(filters.VOICE, handlers.handle_voice_message))
-    text_filter = filters.TEXT & ~filters.COMMAND & ~form_button_filter & ~contact_button_filter & ~quiz_button_filter
+    
+    # --- Фильтр для обычных текстовых сообщений (должен быть в конце) ---
+    text_filter = (
+        filters.TEXT & ~filters.COMMAND & 
+        ~form_button_filter & ~contact_button_filter & ~quiz_button_filter &
+        ~stats_button_filter & ~debug_button_filter & ~prompt_button_filter
+    )
     app.add_handler(MessageHandler(text_filter, handlers.handle_text_message))
 
 async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> Application:

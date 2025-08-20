@@ -3,7 +3,7 @@
 import io
 import re
 from pydub import AudioSegment
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
 
@@ -11,7 +11,7 @@ from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
 from src.app.services.analytics_service import AnalyticsService
 from src.domain.models import User, Message
-from src.api.telegram.keyboards import get_main_keyboard, cancel_keyboard, make_quiz_keyboard
+from src.api.telegram.keyboards import get_main_keyboard, cancel_keyboard, make_quiz_keyboard, admin_keyboard
 from src.shared.logger import logger
 from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 
@@ -26,6 +26,11 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     ai_service: AIService = context.application.bot_data['ai_service']
     user_id = update.effective_user.id
     client_id, _ = get_client_context(context)
+
+    # Если админ в режиме админки, не обрабатываем его сообщения как обычные
+    if context.user_data.get('is_admin_mode'):
+        await update.message.reply_text("Вы находитесь в режиме администратора. Для выхода введите /start, чтобы вернуться в обычный режим.")
+        return
 
     user_category = ai_service.repo.get_user_category(user_id, client_id)
     if user_category is None:
@@ -60,12 +65,16 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # При старте сбрасываем режим админа, чтобы пользователь вернулся к обычной клавиатуре
+    context.user_data['is_admin_mode'] = False
+    
     lead_service: LeadService = context.application.bot_data['lead_service']
     user_data = update.effective_user
     client_id, _ = get_client_context(context)
     utm_source = context.args[0] if context.args else None
     user = User(id=user_data.id, username=user_data.username, first_name=user_data.first_name, utm_source=utm_source)
     lead_service.repo.save_user(user, client_id)
+    
     await update.message.reply_text(
         'Здравствуйте! Я ваш юридический AI-ассистент.\n\n'
         '📝 Чтобы начать анкету, нажмите кнопку ниже.\n'
@@ -106,6 +115,9 @@ async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     username = f"@{user.username}" if user.username else f"ID: {user.id}"
     message_for_manager = f"<b>🧑‍💼 Запрос на связь от {username}</b>\n\nПожалуйста, свяжитесь с этим пользователем."
     if manager_contact:
+        # ИЗМЕНЕНИЕ: Передаем правильный bot-инстанс в сервис
+        lead_service: LeadService = context.application.bot_data['lead_service']
+        lead_service.bot = context.bot
         await context.bot.send_message(chat_id=manager_contact, text=message_for_manager, parse_mode=ParseMode.HTML)
     await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=get_main_keyboard(context))
 
@@ -148,6 +160,7 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         quiz_answers = context.user_data.get('quiz_answers', {})
         lead_service.repo.save_quiz_results(user.id, quiz_answers, client_id)
+        lead_service.bot = context.bot
         await lead_service.send_quiz_results_to_manager(user, quiz_answers, manager_contact)
         await query.edit_message_text(text="Спасибо за ваши ответы! Мы скоро свяжемся с вами для подробной консультации.")
         context.user_data.pop('quiz_answers', None)
@@ -172,6 +185,16 @@ async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_T
 def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     _, manager_contact = get_client_context(context)
     return str(update.effective_user.id) == manager_contact
+
+# --- Админ-панель и команды ---
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update, context): return
+    context.user_data['is_admin_mode'] = True
+    await update.message.reply_text(
+        "Добро пожаловать в панель администратора!\n\n"
+        "Для выхода и возврата в обычный режим диалога отправьте /start.",
+        reply_markup=admin_keyboard
+    )
 
 async def last_answer_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
@@ -207,9 +230,7 @@ async def get_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     client_id, _ = get_client_context(context)
     ai_service: AIService = context.application.bot_data['ai_service']
-    
     current_prompt = ai_service.repo.get_client_system_prompt(client_id)
-    
     if current_prompt:
         response_text = f"<b>Текущий системный промпт (Клиент ID: {client_id}):</b>\n\n<pre>{current_prompt}</pre>"
         await update.message.reply_text(response_text, parse_mode=ParseMode.HTML)
@@ -220,26 +241,57 @@ async def set_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     client_id, _ = get_client_context(context)
     ai_service: AIService = context.application.bot_data['ai_service']
-
     if not context.args:
         await update.message.reply_text(
             "<b>Ошибка:</b> вы не указали текст промпта.\n\n"
             "<b>Пример использования:</b>\n"
-            "/set_prompt Ты — весёлый пират-юрист. Твоя задача — консультировать по вопросам банкротства на пиратском сленге.",
+            "/set_prompt Ты — весёлый пират-юрист.",
             parse_mode=ParseMode.HTML
         )
         return
-
     new_prompt = " ".join(context.args)
-    
     success = ai_service.repo.update_client_system_prompt(client_id, new_prompt)
-    
     if success:
         await update.message.reply_text("✅ Системный промпт успешно обновлен!")
         await get_prompt(update, context)
     else:
-        await update.message.reply_text("❌ Произошла ошибка при обновлении промпта. Посмотрите логи сервера.")
+        await update.message.reply_text("❌ Произошла ошибка при обновлении промпта.")
 
+async def broadcast_dry_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update, context): return
+    client_id, _ = get_client_context(context)
+    lead_service: LeadService = context.application.bot_data['lead_service']
+    message_text = " ".join(context.args)
+    if not message_text:
+        await update.message.reply_text("<b>Ошибка:</b> Текст сообщения не может быть пустым.\nПример: /broadcast_dry_run <b>Привет!</b>", parse_mode=ParseMode.HTML)
+        return
+    user_ids = lead_service.repo.get_lead_user_ids_by_client(client_id)
+    report = (
+        f"<b>-- ТЕСТОВЫЙ ЗАПУСК РАССЫЛКИ --</b>\n\n"
+        f"<b>Клиент ID:</b> {client_id}\n"
+        f"<b>Количество получателей:</b> {len(user_ids)}\n"
+        f"<b>Текст сообщения:</b>\n\n<pre>{message_text}</pre>"
+    )
+    await update.message.reply_text(report, parse_mode=ParseMode.HTML)
+
+async def broadcast_real(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update, context): return
+    client_id, _ = get_client_context(context)
+    lead_service: LeadService = context.application.bot_data['lead_service']
+    message_text = " ".join(context.args)
+    if not message_text:
+        await update.message.reply_text("<b>Ошибка:</b> Текст сообщения не может быть пустым.\nПример: /broadcast <b>Привет!</b>", parse_mode=ParseMode.HTML)
+        return
+    job_context = {
+        'bot': context.bot,
+        'client_id': client_id,
+        'message': message_text,
+        'admin_chat_id': update.effective_chat.id
+    }
+    context.job_queue.run_once(lead_service._broadcast_message_task, when=0, data=job_context, name=f"broadcast_{client_id}_{update.update_id}")
+    await update.message.reply_text(f"✅ Рассылка для клиента ID {client_id} запущена в фоновом режиме. Вы получите отчет по завершении.")
+
+# --- Логика анкеты ---
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Отлично! Приступаем к заполнению анкеты.\n\nКак я могу к вам обращаться?", reply_markup=cancel_keyboard)
     return GET_NAME
@@ -265,6 +317,7 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_data = update.effective_user
     context.user_data['region'] = update.message.text
     user = User(id=user_data.id, username=user_data.username, first_name=user_data.first_name)
+    lead_service.bot = context.bot
     await lead_service.save_lead(user, context.user_data, client_id, manager_contact)
     await update.message.reply_text("Спасибо за ваши ответы! Наши специалисты скоро свяжутся с вами.", reply_markup=get_main_keyboard(context))
     context.user_data.clear()

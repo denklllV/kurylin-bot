@@ -4,7 +4,6 @@ from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardBu
 from typing import List, Dict
 from telegram.ext import ContextTypes
 
-# НОВАЯ ФУНКЦИЯ: Динамически создает главную клавиатуру
 def get_main_keyboard(context: ContextTypes.DEFAULT_TYPE) -> ReplyKeyboardMarkup:
     """
     Создает главную клавиатуру, добавляя кнопку "Квиз" только если
@@ -14,13 +13,21 @@ def get_main_keyboard(context: ContextTypes.DEFAULT_TYPE) -> ReplyKeyboardMarkup
         ['📝 Заполнить анкету', '🧑‍💼 Связаться с человеком'],
     ]
     
-    # Проверяем, есть ли данные квиза в контексте этого бота
     quiz_data = context.bot_data.get('quiz_data')
     if quiz_data:
-        # Если есть, добавляем кнопку квиза в новый ряд
         base_buttons.append(['🎯 Квиз'])
         
     return ReplyKeyboardMarkup(base_buttons, resize_keyboard=True)
+
+# НОВАЯ КЛАВИАТУРА: Панель администратора
+admin_keyboard = ReplyKeyboardMarkup(
+    [
+        ['📊 Статистика (/stats)', '🕵️‍♂️ Отладка (/last_answer)'],
+        ['📜 Показать промпт (/get_prompt)'],
+        ['/admin'] # Можно добавить кнопку для скрытия/показа
+    ],
+    resize_keyboard=True
+)
 
 cancel_keyboard = ReplyKeyboardMarkup(
     [['Отмена']],

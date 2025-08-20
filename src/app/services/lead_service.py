@@ -2,7 +2,9 @@
 
 from telegram import Bot
 from telegram.constants import ParseMode
-from typing import Dict
+from telegram.error import TelegramError
+from typing import Dict, List
+import asyncio
 
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.domain.models import Lead, User
@@ -11,7 +13,7 @@ from src.shared.logger import logger
 class LeadService:
     def __init__(self, repo: SupabaseRepo, bot: Bot):
         self.repo = repo
-        self.bot = bot
+        self.bot = bot # Примечание: Это все еще "пустышка", реальный bot будет передан из хендлера
         logger.info("LeadService initialized for multi-tenancy.")
 
     async def save_lead(self, user: User, lead_data: dict, client_id: int, manager_contact: str):
@@ -41,6 +43,7 @@ class LeadService:
             f"<b>Регион:</b> {lead.region}"
         )
         try:
+            # ИСПОЛЬЗУЕМ self.bot, который будет заменен на правильный инстанс в хендлере
             await self.bot.send_message(
                 chat_id=manager_contact, text=message_text, parse_mode=ParseMode.HTML
             )
@@ -68,5 +71,50 @@ class LeadService:
             logger.info(f"Quiz results for user {user.id} sent to manager {manager_contact}.")
         except Exception as e:
             logger.error(f"Failed to send quiz results to manager {manager_contact}: {e}", exc_info=True)
+
+    # НОВЫЙ МЕТОД: Основная логика фоновой рассылки
+    async def _broadcast_message_task(self, context: Dict):
+        """
+        Асинхронная задача для безопасной рассылки сообщений.
+        Вызывается через job_queue.
+        """
+        bot: Bot = context['bot']
+        client_id: int = context['client_id']
+        message: str = context['message']
+        admin_chat_id: int = context['admin_chat_id']
+
+        user_ids = self.repo.get_lead_user_ids_by_client(client_id)
+        if not user_ids:
+            await bot.send_message(admin_chat_id, "✅ Рассылка завершена. Не найдено ни одного пользователя, оставившего заявку.")
+            return
+
+        successful_sends = 0
+        failed_sends = 0
+
+        for user_id in user_ids:
+            try:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True
+                )
+                successful_sends += 1
+            except TelegramError as e:
+                logger.error(f"Broadcast failed for user {user_id} (client {client_id}). Error: {e}")
+                failed_sends += 1
+            
+            # ЗАЩИТА ОТ СПАМ-БЛОКИРОВКИ: Пауза 100 мс между сообщениями.
+            # Позволяет отправлять ~10 сообщений/сек, что безопасно.
+            await asyncio.sleep(0.1)
+
+        summary_report = (
+            f"✅ <b>Рассылка завершена</b>\n\n"
+            f"<b>Клиент ID:</b> {client_id}\n"
+            f"<b>Успешно отправлено:</b> {successful_sends}\n"
+            f"<b>Не удалось отправить:</b> {failed_sends}"
+        )
+        await bot.send_message(admin_chat_id, summary_report, parse_mode=ParseMode.HTML)
+
 
 # END OF FILE: src/app/services/lead_service.py
