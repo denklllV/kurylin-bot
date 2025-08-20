@@ -11,8 +11,10 @@ from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
 from src.app.services.analytics_service import AnalyticsService
 from src.domain.models import User, Message
-from src.api.telegram.keyboards import main_keyboard, cancel_keyboard, make_quiz_keyboard
-from src.api.telegram.quiz_data import QUIZ_DATA
+# ИЗМЕНЕНИЕ: Импортируем get_main_keyboard вместо статической переменной
+from src.api.telegram.keyboards import get_main_keyboard, cancel_keyboard, make_quiz_keyboard
+# ИЗМЕНЕНИЕ: Удаляем импорт статического файла с данными квиза
+# from src.api.telegram.quiz_data import QUIZ_DATA
 from src.shared.logger import logger
 from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 
@@ -39,15 +41,17 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_chat_action(ChatAction.TYPING)
 
     response_text, debug_info = ai_service.get_text_response(user_id, user_question, client_id)
-    # Сохраняем отладку в общем хранилище по ключу client_id
     context.application.bot_data.setdefault('last_debug_info', {})[client_id] = debug_info
     ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text), client_id)
     
     quiz_completed, _ = ai_service.repo.get_user_quiz_status(user_id, client_id)
-    reply_markup = main_keyboard
+    # ИЗМЕНЕНИЕ: Используем динамическую клавиатуру по умолчанию
+    reply_markup = get_main_keyboard(context)
     parse_mode = None 
     
-    if not quiz_completed:
+    # ИЗМЕНЕНИЕ: Предлагаем квиз, только если он есть у клиента и еще не пройден
+    quiz_data = context.bot_data.get('quiz_data')
+    if quiz_data and not quiz_completed:
         quiz_prompt_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎯 Пройти квиз для точной оценки", callback_data="start_quiz_from_prompt")]
         ])
@@ -72,7 +76,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '📝 Чтобы начать анкету, нажмите кнопку ниже.\n'
         '🎯 Пройдите квиз, чтобы получить точную оценку.\n'
         '❓ Чтобы задать вопрос, просто напишите его в этот чат.',
-        reply_markup=main_keyboard
+        # ИЗМЕНЕНИЕ: Используем динамическую клавиатуру
+        reply_markup=get_main_keyboard(context)
     )
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -108,30 +113,47 @@ async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     message_for_manager = f"<b>🧑‍💼 Запрос на связь от {username}</b>\n\nПожалуйста, свяжитесь с этим пользователем."
     if manager_contact:
         await context.bot.send_message(chat_id=manager_contact, text=message_for_manager, parse_mode=ParseMode.HTML)
-    await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=main_keyboard)
+    await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=get_main_keyboard(context))
 
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    client_id, _ = get_client_context(context)
+    quiz_data = context.bot_data.get('quiz_data')
+
+    if not quiz_data:
+        logger.warning(f"User {update.effective_user.id} tried to start a quiz, but it is disabled for client {client_id}.")
+        await update.message.reply_text("К сожалению, квиз в данный момент недоступен.", reply_markup=get_main_keyboard(context))
+        return
+
     context.user_data['quiz_answers'] = {}
     step = 0
-    question_data = QUIZ_DATA[step]
+    question_data = quiz_data[step]
     keyboard = make_quiz_keyboard(question_data["answers"], step)
     await update.message.reply_text(question_data["question"], reply_markup=keyboard)
 
 async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    lead_service: LeadService = context.application.bot_data['lead_service']
+
     client_id, manager_contact = get_client_context(context)
+    quiz_data = context.bot_data.get('quiz_data')
+    if not quiz_data:
+        logger.error(f"Quiz answer received, but no quiz_data in context for client {client_id}.")
+        await query.edit_message_text(text="Произошла ошибка: структура квиза не найдена.")
+        return
+
+    lead_service: LeadService = context.application.bot_data['lead_service']
     parts = query.data.split('_')
     step = int(parts[2])
     answer_index = int(parts[4])
-    question_data = QUIZ_DATA[step]
+    
+    question_data = quiz_data[step]
     answer_data = question_data["answers"][answer_index]
     question_text = re.sub(r'^\d+/\d+\.\s*', '', question_data["question"])
     context.user_data.setdefault('quiz_answers', {})[question_text] = answer_data["text"]
+    
     next_step = step + 1
-    if next_step < len(QUIZ_DATA):
-        next_question_data = QUIZ_DATA[next_step]
+    if next_step < len(quiz_data):
+        next_question_data = quiz_data[next_step]
         keyboard = make_quiz_keyboard(next_question_data["answers"], next_step)
         await query.edit_message_text(text=next_question_data["question"], reply_markup=keyboard)
     else:
@@ -145,10 +167,19 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
+    client_id, _ = get_client_context(context)
+    quiz_data = context.bot_data.get('quiz_data')
+    if not quiz_data:
+        logger.error(f"start_quiz_from_prompt called, but no quiz_data for client {client_id}.")
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text("К сожалению, квиз в данный момент недоступен.")
+        return
+
     await query.edit_message_reply_markup(reply_markup=None)
     context.user_data['quiz_answers'] = {}
     step = 0
-    question_data = QUIZ_DATA[step]
+    question_data = quiz_data[step]
     keyboard = make_quiz_keyboard(question_data["answers"], step)
     await query.message.reply_text(question_data["question"], reply_markup=keyboard)
         
@@ -170,24 +201,15 @@ async def last_answer_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     report = (f"<b>--- Отладка последнего ответа (Клиент ID: {client_id}) ---</b>\n\n" f"<b>Время обработки:</b> {debug_info.get('processing_time', 'N/A')}\n" f"<b>Вопрос пользователя:</b> {debug_info.get('user_question', 'N/A')}\n\n" f"<b>--- Использованная история диалога ---</b>\n{history_report}\n\n" f"<b>--- Найденный контекст (RAG) ---</b>\n{rag_report}")
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
-# ИЗМЕНЕНИЕ: Логика полностью переработана для мультиарендности
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
-    
-    # 1. Получаем ID текущего клиента из контекста
     client_id, _ = get_client_context(context)
     if not client_id:
         await update.message.reply_text("Не удалось определить ID клиента. Операция невозможна.")
         return
-    
-    # 2. Получаем сервис аналитики из контекста
     analytics_service: AnalyticsService = context.application.bot_data['analytics_service']
-    
-    # 3. Вызываем сервис для генерации отчета, передавая ID клиента
     await update.message.reply_chat_action(ChatAction.TYPING)
     report = analytics_service.generate_summary_report(client_id)
-    
-    # 4. Отправляем готовый отчет администратору
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
 async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -221,12 +243,12 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['region'] = update.message.text
     user = User(id=user_data.id, username=user_data.username, first_name=user_data.first_name)
     await lead_service.save_lead(user, context.user_data, client_id, manager_contact)
-    await update.message.reply_text("Спасибо за ваши ответы! Наши специалисты скоро свяжутся с вами.", reply_markup=main_keyboard)
+    await update.message.reply_text("Спасибо за ваши ответы! Наши специалисты скоро свяжутся с вами.", reply_markup=get_main_keyboard(context))
     context.user_data.clear()
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Заполнение анкеты отменено.", reply_markup=main_keyboard)
+    await update.message.reply_text("Заполнение анкеты отменено.", reply_markup=get_main_keyboard(context))
     context.user_data.clear()
     return ConversationHandler.END
 

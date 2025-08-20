@@ -2,15 +2,25 @@
 
 from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from typing import List, Dict
+from telegram.ext import ContextTypes
 
-# ИЗМЕНЕНИЕ: Укорачиваем текст кнопки до "Квиз"
-main_keyboard = ReplyKeyboardMarkup(
-    [
+# НОВАЯ ФУНКЦИЯ: Динамически создает главную клавиатуру
+def get_main_keyboard(context: ContextTypes.DEFAULT_TYPE) -> ReplyKeyboardMarkup:
+    """
+    Создает главную клавиатуру, добавляя кнопку "Квиз" только если
+    конфигурация квиза существует для данного клиента.
+    """
+    base_buttons = [
         ['📝 Заполнить анкету', '🧑‍💼 Связаться с человеком'],
-        ['🎯 Квиз']
-    ],
-    resize_keyboard=True
-)
+    ]
+    
+    # Проверяем, есть ли данные квиза в контексте этого бота
+    quiz_data = context.bot_data.get('quiz_data')
+    if quiz_data:
+        # Если есть, добавляем кнопку квиза в новый ряд
+        base_buttons.append(['🎯 Квиз'])
+        
+    return ReplyKeyboardMarkup(base_buttons, resize_keyboard=True)
 
 cancel_keyboard = ReplyKeyboardMarkup(
     [['Отмена']],
