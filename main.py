@@ -41,7 +41,8 @@ def register_handlers(app: Application):
     
     stats_button_filter = filters.Regex('^📊 Статистика$')
     export_button_filter = filters.Regex('^📤 Экспорт лидов$')
-    prompt_menu_button_filter = filters.Regex('^📜 Управление промптом$')
+    # ИЗМЕНЕНИЕ: Этот фильтр больше не используется, так как соответствующая функция удалена
+    # prompt_menu_button_filter = filters.Regex('^📜 Управление промптом$')
     broadcast_menu_button_filter = filters.Regex('^📣 Рассылка$')
     debug_button_filter = filters.Regex('^🕵️‍♂️ Отладка ответа$')
     quiz_management_button_filter = filters.Regex('^🧩 Управление квизом$')
@@ -84,7 +85,8 @@ def register_handlers(app: Application):
 
     app.add_handler(MessageHandler(stats_button_filter, handlers.stats))
     app.add_handler(MessageHandler(export_button_filter, handlers.export_leads))
-    app.add_handler(MessageHandler(prompt_menu_button_filter, handlers.prompt_management_menu))
+    # ИЗМЕНЕНИЕ: Удаляем обработчик для несуществующей функции
+    # app.add_handler(MessageHandler(prompt_menu_button_filter, handlers.prompt_management_menu))
     app.add_handler(MessageHandler(debug_button_filter, handlers.last_answer_debug))
     app.add_handler(MessageHandler(quiz_management_button_filter, handlers.quiz_management_menu))
 
@@ -101,7 +103,8 @@ def register_handlers(app: Application):
     text_filter = (
         filters.TEXT & ~filters.COMMAND & ~form_button_filter & 
         ~contact_button_filter & ~quiz_button_filter & ~stats_button_filter &
-        ~export_button_filter & ~prompt_menu_button_filter & 
+        ~export_button_filter & 
+        # ~prompt_menu_button_filter & # <-- Удаляем фильтр из общего списка
         ~broadcast_menu_button_filter & ~debug_button_filter &
         ~quiz_management_button_filter &
         ~filters.Regex('^✅ Отправить всем$') & ~filters.Regex('^📝 Редактировать$') & ~cancel_filter
