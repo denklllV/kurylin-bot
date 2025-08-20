@@ -2,6 +2,7 @@
 
 import io
 import re
+from pydub import AudioSegment
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
@@ -169,10 +170,25 @@ async def last_answer_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     report = (f"<b>--- Отладка последнего ответа (Клиент ID: {client_id}) ---</b>\n\n" f"<b>Время обработки:</b> {debug_info.get('processing_time', 'N/A')}\n" f"<b>Вопрос пользователя:</b> {debug_info.get('user_question', 'N/A')}\n\n" f"<b>--- Использованная история диалога ---</b>\n{history_report}\n\n" f"<b>--- Найденный контекст (RAG) ---</b>\n{rag_report}")
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
+# ИЗМЕНЕНИЕ: Логика полностью переработана для мультиарендности
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
+    
+    # 1. Получаем ID текущего клиента из контекста
     client_id, _ = get_client_context(context)
-    await update.message.reply_text(f"Аналитика для клиента ID: {client_id} в разработке.")
+    if not client_id:
+        await update.message.reply_text("Не удалось определить ID клиента. Операция невозможна.")
+        return
+    
+    # 2. Получаем сервис аналитики из контекста
+    analytics_service: AnalyticsService = context.application.bot_data['analytics_service']
+    
+    # 3. Вызываем сервис для генерации отчета, передавая ID клиента
+    await update.message.reply_chat_action(ChatAction.TYPING)
+    report = analytics_service.generate_summary_report(client_id)
+    
+    # 4. Отправляем готовый отчет администратору
+    await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
 async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
