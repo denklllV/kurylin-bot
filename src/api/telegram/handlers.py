@@ -14,7 +14,7 @@ from src.app.services.analytics_service import AnalyticsService
 from src.domain.models import User, Message
 from src.api.telegram.keyboards import (
     get_main_keyboard, cancel_keyboard, make_quiz_keyboard, admin_keyboard,
-    broadcast_media_keyboard, broadcast_confirm_keyboard
+    broadcast_confirm_keyboard
 )
 from src.infra.clients.sheets_client import GoogleSheetsClient
 from src.shared.logger import logger
@@ -24,7 +24,6 @@ from src.shared.config import (
 )
 
 def get_client_context(context: ContextTypes.DEFAULT_TYPE) -> (int, str):
-    """Извлекает client_id и manager_contact из контекста бота."""
     client_id = context.bot_data.get('client_id')
     manager_contact = context.bot_data.get('manager_contact')
     return client_id, manager_contact
@@ -284,12 +283,23 @@ async def quiz_management_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode=ParseMode.HTML
     )
 
-# --- Мастер Рассылок ---
+async def prompt_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update, context): return
+    await update.message.reply_text(
+        "<b>Управление системным промптом:</b>\n\n"
+        "Для просмотра текущего промпта, используйте команду:\n"
+        "/get_prompt\n\n"
+        "Для установки нового промпта, используйте команду:\n"
+        "/set_prompt [Ваш новый текст промпта]",
+        parse_mode=ParseMode.HTML
+    )
+
+# --- Мастер Рассылок (полный рефакторинг) ---
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update, context): return ConversationHandler.END
     await update.message.reply_text(
         "Начинаем создание рассылки.\n\n"
-        "<b>Шаг 1/3:</b> Отправьте мне текст вашего сообщения. Вы можете использовать HTML-теги.",
+        "<b>Шаг 1/3:</b> Отправьте мне текст вашего сообщения. Вы можете использовать HTML-теги для форматирования.",
         parse_mode=ParseMode.HTML,
         reply_markup=cancel_keyboard
     )
@@ -299,9 +309,10 @@ async def broadcast_get_message(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data['broadcast_message'] = update.message.text_html
     await update.message.reply_text(
         "Текст получен.\n\n"
-        "<b>Шаг 2/3:</b> Хотите добавить картинку или документ?",
+        "<b>Шаг 2/3:</b> Теперь отправьте мне картинку или документ, который нужно прикрепить.\n\n"
+        "Если медиа не нужно, просто пропустите этот шаг командой /skip",
         parse_mode=ParseMode.HTML,
-        reply_markup=broadcast_media_keyboard
+        reply_markup=ReplyKeyboardRemove()
     )
     return GET_BROADCAST_MEDIA
 
@@ -319,9 +330,7 @@ async def broadcast_get_media(update: Update, context: ContextTypes.DEFAULT_TYPE
     return CONFIRM_BROADCAST
 
 async def broadcast_skip_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("Хорошо, рассылка будет только с текстом. Давайте посмотрим, что получилось.")
+    await update.message.reply_text("Хорошо, рассылка будет только с текстом. Давайте посмотрим, что получилось.")
     await broadcast_preview(update, context)
     return CONFIRM_BROADCAST
 

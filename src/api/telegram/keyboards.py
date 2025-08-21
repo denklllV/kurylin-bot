@@ -33,14 +33,8 @@ cancel_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-broadcast_media_keyboard = InlineKeyboardMarkup(
-    [
-        [
-            InlineKeyboardButton("🏞️ Добавить медиа", callback_data="broadcast_add_media"),
-            InlineKeyboardButton("➡️ Пропустить", callback_data="broadcast_skip_media")
-        ]
-    ]
-)
+# УДАЛЕНО: broadcast_media_keyboard больше не используется,
+# так как мы переходим на команду /skip.
 
 broadcast_confirm_keyboard = ReplyKeyboardMarkup(
     [
