@@ -16,11 +16,11 @@ from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 
 # --- Вспомогательные функции, общие для всех обработчиков ---
 def get_client_context(context: ContextTypes.DEFAULT_TYPE) -> (int, str):
+    """Извлекает client_id и manager_contact из контекста бота."""
     client_id = context.bot_data.get('client_id')
     manager_contact = context.bot_data.get('manager_contact')
     return client_id, manager_contact
 
-# НОВАЯ ФУНКЦИЯ: Надежное экранирование для MarkdownV2
 def escape_markdown_v2(text: str) -> str:
     """Экранирует все зарезервированные символы для Telegram MarkdownV2."""
     escape_chars = r'_*[]()~`>#+-=|{}.!'
@@ -74,15 +74,17 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     reply_markup = get_main_keyboard(context)
     parse_mode = ParseMode.MARKDOWN_V2
     
+    final_text = response_text
+    
     quiz_data = context.bot_data.get('quiz_data')
     if quiz_data and not quiz_completed:
         quiz_prompt_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎯 Пройти квиз для точной оценки", callback_data="start_quiz_from_prompt")]])
         reply_markup = quiz_prompt_keyboard
-        # ИЗМЕНЕНИЕ: Используем новую надежную функцию экранирования
-        escaped_text = escape_markdown_v2(response_text)
-        response_text = escaped_text + "\n\n_Чтобы я мог дать более точную рекомендацию, пройдите короткий квиз\\._"
+        final_text += "\n\n_Чтобы я мог дать более точную рекомендацию, пройдите короткий квиз\\._"
     
-    await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
+    escaped_final_text = escape_markdown_v2(final_text)
+    
+    await update.message.reply_text(escaped_final_text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _process_user_message(update, context, update.message.text)
