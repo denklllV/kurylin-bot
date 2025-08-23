@@ -14,15 +14,13 @@ from src.api.telegram.keyboards import get_main_keyboard, cancel_keyboard, make_
 from src.shared.logger import logger
 from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 
-# --- Вспомогательные функции, общие для всех обработчиков ---
+# --- Вспомогательные функции ---
 def get_client_context(context: ContextTypes.DEFAULT_TYPE) -> (int, str):
-    """Извлекает client_id и manager_contact из контекста бота."""
     client_id = context.bot_data.get('client_id')
     manager_contact = context.bot_data.get('manager_contact')
     return client_id, manager_contact
 
 def escape_markdown_v2(text: str) -> str:
-    """Экранирует все зарезервированные символы для Telegram MarkdownV2."""
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
@@ -53,12 +51,11 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     client_id, _ = get_client_context(context)
 
     if context.user_data.get('is_admin_mode'):
-        await update.message.reply_text("Вы находитесь в режиме администратора. Для выхода введите /start, чтобы вернуться в обычный режим.")
+        await update.message.reply_text("Вы находитесь в режиме администратора. Для выхода введите /start.")
         return
 
     user_category = ai_service.repo.get_user_category(user_id, client_id)
     if user_category is None:
-        logger.info(f"User {user_id} (client {client_id}) has no category. Classifying...")
         new_category = ai_service.classify_text(user_question)
         if new_category:
             ai_service.repo.update_user_category(user_id, new_category, client_id)
@@ -71,20 +68,20 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text), client_id)
     
     quiz_completed, _ = ai_service.repo.get_user_quiz_status(user_id, client_id)
-    reply_markup = get_main_keyboard(context)
-    parse_mode = ParseMode.MARKDOWN_V2
     
-    final_text = response_text
-    
+    # ИЗМЕНЕНИЕ: Формируем новую инлайн-клавиатуру с призывом к действию
+    action_buttons = []
     quiz_data = context.bot_data.get('quiz_data')
     if quiz_data and not quiz_completed:
-        quiz_prompt_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎯 Пройти квиз для точной оценки", callback_data="start_quiz_from_prompt")]])
-        reply_markup = quiz_prompt_keyboard
-        final_text += "\n\n_Чтобы я мог дать более точную рекомендацию, пройдите короткий квиз\\._"
+        action_buttons.append(InlineKeyboardButton(" пройти чек-лист", callback_data="start_quiz_from_prompt"))
     
-    escaped_final_text = escape_markdown_v2(final_text)
+    action_buttons.append(InlineKeyboardButton(" Свяжитесь со мной", callback_data="request_human_contact"))
+    reply_markup = InlineKeyboardMarkup([action_buttons])
     
-    await update.message.reply_text(escaped_final_text, reply_markup=reply_markup, parse_mode=parse_mode)
+    # ИЗМЕНЕНИЕ: Переключаемся на обычный Markdown, который более гибкий
+    parse_mode = ParseMode.MARKDOWN
+    
+    await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _process_user_message(update, context, update.message.text)
@@ -104,13 +101,12 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         mp3_stream.seek(0)
         transcribed_text = ai_service.transcribe_voice(mp3_stream.read())
     except Exception as e:
-        logger.error(f"Error converting audio: {e}", exc_info=True)
         transcribed_text = None
     if transcribed_text:
         await update.message.reply_text(f"Ваш вопрос: «{transcribed_text}»\n\nОбрабатываю...")
         await _process_user_message(update, context, transcribed_text)
     else:
-        await update.message.reply_text("К сожалению, не удалось распознать речь. Попробуйте записать снова или напишите вопрос текстом.")
+        await update.message.reply_text("К сожалению, не удалось распознать речь.")
 
 async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, manager_contact = get_client_context(context)
@@ -118,17 +114,20 @@ async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     username = f"@{user.username}" if user.username else f"ID: {user.id}"
     message_for_manager = f"<b>🧑‍💼 Запрос на связь от {username}</b>\n\nПожалуйста, свяжитесь с этим пользователем."
     if manager_contact:
-        lead_service: LeadService = context.application.bot_data['lead_service']
-        lead_service.bot = context.bot
         await context.bot.send_message(chat_id=manager_contact, text=message_for_manager, parse_mode=ParseMode.HTML)
     await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=get_main_keyboard(context))
 
-# --- Логика Квиза ---
+# НОВЫЙ ХЕНДЛЕР: для инлайн-кнопки "Свяжитесь со мной"
+async def request_human_contact_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Передаю ваш запрос менеджеру...")
+    await contact_human(update, context)
+
+
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    client_id, _ = get_client_context(context)
     quiz_data = context.bot_data.get('quiz_data')
     if not quiz_data:
-        await update.message.reply_text("К сожалению, квиз в данный момент недоступен.", reply_markup=get_main_keyboard(context))
+        await update.message.reply_text("К сожалению, чек-лист сейчас недоступен.", reply_markup=get_main_keyboard(context))
         return
     context.user_data['quiz_answers'] = {}
     step = 0
@@ -142,7 +141,7 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client_id, manager_contact = get_client_context(context)
     quiz_data = context.bot_data.get('quiz_data')
     if not quiz_data:
-        await query.edit_message_text(text="Произошла ошибка: структура квиза не найдена.")
+        await query.edit_message_text(text="Произошла ошибка: структура чек-листа не найдена.")
         return
     lead_service: LeadService = context.application.bot_data['lead_service']
     parts = query.data.split('_')
@@ -169,11 +168,10 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    client_id, _ = get_client_context(context)
     quiz_data = context.bot_data.get('quiz_data')
     if not quiz_data:
         await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text("К сожалению, квиз в данный момент недоступен.")
+        await query.message.reply_text("К сожалению, чек-лист сейчас недоступен.")
         return
     await query.edit_message_reply_markup(reply_markup=None)
     context.user_data['quiz_answers'] = {}
@@ -181,6 +179,7 @@ async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_T
     question_data = quiz_data[step]
     keyboard = make_quiz_keyboard(question_data["answers"], step)
     await query.message.reply_text(question_data["question"], reply_markup=keyboard)
+
 
 # --- Логика анкеты (ConversationHandler) ---
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

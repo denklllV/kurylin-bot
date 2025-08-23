@@ -46,7 +46,6 @@ def register_handlers(app: Application):
     debug_button_filter = filters.Regex('^🕵️‍♂️ Отладка ответа$')
     quiz_management_button_filter = filters.Regex('^🧩 Управление квизом$')
 
-    # ИЗМЕНЕНИЕ: Делаем фильтр для анкеты более строгим, чтобы он не ловил "Отмена"
     form_text_filter = filters.TEXT & ~filters.COMMAND & ~cancel_filter
 
     form_conv_handler = ConversationHandler(
@@ -91,8 +90,10 @@ def register_handlers(app: Application):
     app.add_handler(MessageHandler(debug_button_filter, admin_handlers.last_answer_debug))
     app.add_handler(MessageHandler(quiz_management_button_filter, admin_handlers.quiz_management_menu))
 
+    # ИЗМЕНЕНИЕ: Регистрируем новый обработчик для инлайн-кнопки "Свяжитесь со мной"
     app.add_handler(CallbackQueryHandler(user_handlers.quiz_answer, pattern='^quiz_step_'))
     app.add_handler(CallbackQueryHandler(user_handlers.start_quiz_from_prompt, pattern='^start_quiz_from_prompt$'))
+    app.add_handler(CallbackQueryHandler(user_handlers.request_human_contact_inline, pattern='^request_human_contact$'))
 
     app.add_handler(form_conv_handler)
     app.add_handler(broadcast_conv_handler)
