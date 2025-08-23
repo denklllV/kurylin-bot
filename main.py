@@ -27,7 +27,6 @@ from src.infra.clients.hf_whisper_client import WhisperClient
 from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
 from src.app.services.analytics_service import AnalyticsService
-# ИЗМЕНЕНИЕ: Импортируем из новых, разделенных файлов
 from src.api.telegram import user_handlers, admin_handlers
 
 fastapi_app = FastAPI(docs_url=None, redoc_url=None)
@@ -35,7 +34,6 @@ bots: Dict[str, Application] = {}
 client_configs: Dict[str, Dict] = {}
 
 def register_handlers(app: Application):
-    # --- Фильтры для кнопок ---
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
     contact_button_filter = filters.Regex('^🧑‍💼 Связаться с человеком$')
     cancel_filter = filters.Regex('^Отмена$|^❌ Отмена$')
@@ -48,19 +46,20 @@ def register_handlers(app: Application):
     debug_button_filter = filters.Regex('^🕵️‍♂️ Отладка ответа$')
     quiz_management_button_filter = filters.Regex('^🧩 Управление квизом$')
 
-    # --- Обработчик анкеты (из user_handlers) ---
+    # ИЗМЕНЕНИЕ: Делаем фильтр для анкеты более строгим, чтобы он не ловил "Отмена"
+    form_text_filter = filters.TEXT & ~filters.COMMAND & ~cancel_filter
+
     form_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(form_button_filter, user_handlers.start_form)],
         states={
-            GET_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, user_handlers.get_name)],
-            GET_DEBT: [MessageHandler(filters.TEXT & ~filters.COMMAND, user_handlers.get_debt)],
-            GET_INCOME: [MessageHandler(filters.TEXT & ~filters.COMMAND, user_handlers.get_income)],
-            GET_REGION: [MessageHandler(filters.TEXT & ~filters.COMMAND, user_handlers.get_region)],
+            GET_NAME: [MessageHandler(form_text_filter, user_handlers.get_name)],
+            GET_DEBT: [MessageHandler(form_text_filter, user_handlers.get_debt)],
+            GET_INCOME: [MessageHandler(form_text_filter, user_handlers.get_income)],
+            GET_REGION: [MessageHandler(form_text_filter, user_handlers.get_region)],
         },
         fallbacks=[CommandHandler('cancel', user_handlers.cancel), MessageHandler(cancel_filter, user_handlers.cancel)],
     )
 
-    # --- Обработчик Мастера Рассылок (из admin_handlers) ---
     broadcast_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(broadcast_menu_button_filter, admin_handlers.broadcast_start)],
         states={
@@ -77,7 +76,6 @@ def register_handlers(app: Application):
         fallbacks=[CommandHandler('cancel', admin_handlers.broadcast_cancel), MessageHandler(cancel_filter, admin_handlers.broadcast_cancel)],
     )
     
-    # --- Регистрация команд ---
     app.add_handler(CommandHandler("start", user_handlers.start))
     app.add_handler(CommandHandler("admin", admin_handlers.admin_panel))
     app.add_handler(CommandHandler("stats", admin_handlers.stats))
@@ -87,27 +85,22 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("get_prompt", admin_handlers.get_prompt))
     app.add_handler(CommandHandler("set_prompt", admin_handlers.set_prompt))
 
-    # --- Кнопки админ-панели ---
     app.add_handler(MessageHandler(stats_button_filter, admin_handlers.stats))
     app.add_handler(MessageHandler(export_button_filter, admin_handlers.export_leads))
     app.add_handler(MessageHandler(prompt_menu_button_filter, admin_handlers.prompt_management_menu))
     app.add_handler(MessageHandler(debug_button_filter, admin_handlers.last_answer_debug))
     app.add_handler(MessageHandler(quiz_management_button_filter, admin_handlers.quiz_management_menu))
 
-    # --- Инлайн-кнопки (user_handlers) ---
     app.add_handler(CallbackQueryHandler(user_handlers.quiz_answer, pattern='^quiz_step_'))
     app.add_handler(CallbackQueryHandler(user_handlers.start_quiz_from_prompt, pattern='^start_quiz_from_prompt$'))
 
-    # --- Диалоговые обработчики ---
     app.add_handler(form_conv_handler)
     app.add_handler(broadcast_conv_handler)
 
-    # --- Обычные кнопки и сообщения (user_handlers) ---
     app.add_handler(MessageHandler(quiz_button_filter, user_handlers.start_quiz))
     app.add_handler(MessageHandler(contact_button_filter, user_handlers.contact_human))
     app.add_handler(MessageHandler(filters.VOICE, user_handlers.handle_voice_message))
     
-    # --- Фильтр для обычных текстовых сообщений (должен быть в конце) ---
     text_filter = (
         filters.TEXT & ~filters.COMMAND & ~form_button_filter & 
         ~contact_button_filter & ~quiz_button_filter & ~stats_button_filter &
