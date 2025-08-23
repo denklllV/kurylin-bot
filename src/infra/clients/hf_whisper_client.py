@@ -11,7 +11,6 @@ class WhisperClient:
         self.headers = {
             "Authorization": f"Bearer {HF_API_KEY}",
             "Accept": "application/json",
-            # ИСПРАВЛЕНИЕ: Возвращаем правильный Content-Type
             "Content-Type": "audio/mpeg"
         }
         logger.info("WhisperClient initialized with correct 'audio/mpeg' header.")
@@ -19,7 +18,8 @@ class WhisperClient:
     def transcribe(self, audio_data: bytes) -> str | None:
         try:
             logger.info(f"Sending {len(audio_data)} bytes of audio data for transcription...")
-            response = requests.post(self.api_url, headers=self.headers, data=audio_data)
+            # ИЗМЕНЕНИЕ: Добавляем таймаут в 20 секунд. Если HF не ответит, мы получим ошибку.
+            response = requests.post(self.api_url, headers=self.headers, data=audio_data, timeout=20)
             response.raise_for_status()
 
             content_type = response.headers.get('content-type', '')
@@ -39,6 +39,9 @@ class WhisperClient:
 
         except requests.exceptions.HTTPError as e:
             logger.error(f"HTTP Error during transcription request: {e}. Response body: {e.response.text}")
+            return None
+        except requests.exceptions.Timeout:
+            logger.error("Request to Whisper API timed out after 20 seconds.")
             return None
         except Exception as e:
             logger.error(f"Generic error during transcription request: {e}")

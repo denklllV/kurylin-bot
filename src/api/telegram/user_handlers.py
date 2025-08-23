@@ -14,7 +14,7 @@ from src.api.telegram.keyboards import get_main_keyboard, cancel_keyboard, make_
 from src.shared.logger import logger
 from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 
-# --- Вспомогательные функции ---
+# --- Вспомогательные функции, общие для всех обработчиков ---
 def get_client_context(context: ContextTypes.DEFAULT_TYPE) -> (int, str):
     client_id = context.bot_data.get('client_id')
     manager_contact = context.bot_data.get('manager_contact')
@@ -51,7 +51,7 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     client_id, _ = get_client_context(context)
 
     if context.user_data.get('is_admin_mode'):
-        await update.message.reply_text("Вы находитесь в режиме администратора. Для выхода введите /start.")
+        await update.message.reply_text("Вы находитесь в режиме администратора. Для выхода введите /start, чтобы вернуться в обычный режим.")
         return
 
     user_category = ai_service.repo.get_user_category(user_id, client_id)
@@ -69,7 +69,6 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     
     quiz_completed, _ = ai_service.repo.get_user_quiz_status(user_id, client_id)
     
-    # ИЗМЕНЕНИЕ: Формируем новую инлайн-клавиатуру с призывом к действию
     action_buttons = []
     quiz_data = context.bot_data.get('quiz_data')
     if quiz_data and not quiz_completed:
@@ -78,7 +77,6 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     action_buttons.append(InlineKeyboardButton(" Свяжитесь со мной", callback_data="request_human_contact"))
     reply_markup = InlineKeyboardMarkup([action_buttons])
     
-    # ИЗМЕНЕНИЕ: Переключаемся на обычный Markdown, который более гибкий
     parse_mode = ParseMode.MARKDOWN
     
     await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
@@ -101,12 +99,16 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         mp3_stream.seek(0)
         transcribed_text = ai_service.transcribe_voice(mp3_stream.read())
     except Exception as e:
+        logger.error(f"Error converting audio: {e}", exc_info=True)
         transcribed_text = None
+        
     if transcribed_text:
         await update.message.reply_text(f"Ваш вопрос: «{transcribed_text}»\n\nОбрабатываю...")
         await _process_user_message(update, context, transcribed_text)
     else:
-        await update.message.reply_text("К сожалению, не удалось распознать речь.")
+        # ИЗМЕНЕНИЕ: Теперь мы отправляем четкое сообщение об ошибке и останавливаем выполнение.
+        await update.message.reply_text("К сожалению, не удалось распознать речь. Попробуйте записать снова или, пожалуйста, напишите ваш вопрос текстом.")
+        return
 
 async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, manager_contact = get_client_context(context)
@@ -117,12 +119,13 @@ async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await context.bot.send_message(chat_id=manager_contact, text=message_for_manager, parse_mode=ParseMode.HTML)
     await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=get_main_keyboard(context))
 
-# НОВЫЙ ХЕНДЛЕР: для инлайн-кнопки "Свяжитесь со мной"
 async def request_human_contact_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("Передаю ваш запрос менеджеру...")
-    await contact_human(update, context)
-
+    # Используем эффективного пользователя из query, чтобы contact_human работал и для инлайн кнопок
+    effective_update = Update(update.update_id, message=query.message)
+    effective_update.effective_user = query.from_user
+    await contact_human(effective_update, context)
 
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quiz_data = context.bot_data.get('quiz_data')
@@ -157,7 +160,7 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = make_quiz_keyboard(next_question_data["answers"], next_step)
         await query.edit_message_text(text=next_question_data["question"], reply_markup=keyboard)
     else:
-        user = update.effective_user
+        user = query.from_user
         quiz_answers = context.user_data.get('quiz_answers', {})
         lead_service.repo.save_quiz_results(user.id, quiz_answers, client_id)
         lead_service.bot = context.bot
@@ -180,8 +183,6 @@ async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_T
     keyboard = make_quiz_keyboard(question_data["answers"], step)
     await query.message.reply_text(question_data["question"], reply_markup=keyboard)
 
-
-# --- Логика анкеты (ConversationHandler) ---
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Отлично! Приступаем к заполнению анкеты.\n\nКак я могу к вам обращаться?", reply_markup=cancel_keyboard)
     return GET_NAME
