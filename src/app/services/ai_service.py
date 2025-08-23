@@ -26,9 +26,8 @@ class AIService:
         self.or_client = or_client
         self.whisper_client = whisper_client
         self.repo = repo
-        # ИЗМЕНЕНИЕ: Удаляем статический промпт. Он теперь будет загружаться динамически.
-        # self.system_prompt = self._load_system_prompt()
-        self.disclaimer = "\n\nВажно: эта информация носит справочный характер и не является юридической консультацией."
+        # ИЗМЕНЕНИЕ: Жестко закодированный дисклеймер полностью удален.
+        # Ответственность за его наличие теперь лежит на системном промпте.
         logger.info("AIService initialized with DYNAMIC system prompts.")
 
     def classify_text(self, text: str) -> str | None:
@@ -69,10 +68,7 @@ class AIService:
         except Exception as e:
             logger.error(f"Failed to classify text: {e}", exc_info=True)
             return "Общая консультация"
-
-    # ИЗМЕНЕНИЕ: Удаляем метод _load_system_prompt, так как он больше не нужен.
-    
-    # ИЗМЕНЕНИЕ: Метод теперь принимает system_prompt как аргумент.
+        
     def _build_rag_prompt(self, system_prompt: str, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]], quiz_context: str = None) -> List[Dict[str, str]]:
         """Собирает полный промпт, используя предоставленный system_prompt."""
         
@@ -109,7 +105,6 @@ class AIService:
         """Генерирует ответ, используя динамический системный промпт и контекст квиза для клиента."""
         start_time = time.time()
         
-        # ИЗМЕНЕНИЕ: Динамически загружаем системный промпт для текущего клиента.
         system_prompt = self.repo.get_client_system_prompt(client_id)
         if not system_prompt:
             logger.error(f"Could not retrieve system prompt for client {client_id}. Using a safe fallback.")
@@ -123,9 +118,8 @@ class AIService:
             logger.info(f"User {user_id} (client {client_id}) has quiz data. Adding it to context.")
             quiz_context = "\n".join([f"- {q}: {a}" for q, a in quiz_results.items()])
 
-        rag_chunks = [] # RAG отключен
+        rag_chunks = []
         
-        # ИЗМЕНЕНИЕ: Передаем загруженный промпт в сборщик.
         messages_to_send = self._build_rag_prompt(system_prompt, user_question, history, rag_chunks, quiz_context)
         raw_response_text = self.or_client.get_chat_completion(messages_to_send)
         response_text = strip_all_html_tags(raw_response_text)
@@ -142,7 +136,8 @@ class AIService:
         
         logger.info(f"Response generated for client {client_id} (Quiz context: {quiz_completed}). Time: {debug_info['processing_time']}.")
         
-        final_response = response_text + self.disclaimer
+        # ИЗМЕНЕНИЕ: Возвращаем "чистый" ответ модели, без добавления дисклеймера.
+        final_response = response_text
         return final_response, debug_info
 
     def transcribe_voice(self, audio_data: bytes) -> str | None:

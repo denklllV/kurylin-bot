@@ -131,12 +131,12 @@ async def prompt_management_menu(update: Update, context: ContextTypes.DEFAULT_T
         parse_mode=ParseMode.HTML
     )
 
-# --- Управление Квизом (заглушка) ---
+# --- Управление Чек-листом (заглушка) ---
 
-async def quiz_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def checklist_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     await update.message.reply_text(
-        "<b>Управление квизом:</b>\n\nЭта функция находится в разработке.",
+        "<b>Управление Чек-листом:</b>\n\nЭта функция находится в разработке.",
         parse_mode=ParseMode.HTML
     )
 

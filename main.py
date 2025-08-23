@@ -37,14 +37,14 @@ def register_handlers(app: Application):
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
     contact_button_filter = filters.Regex('^🧑‍💼 Связаться с человеком$')
     cancel_filter = filters.Regex('^Отмена$|^❌ Отмена$')
-    quiz_button_filter = filters.Regex('^🎯 Квиз$')
+    checklist_button_filter = filters.Regex('^🎯 Чек-лист$')
     
     stats_button_filter = filters.Regex('^📊 Статистика$')
     export_button_filter = filters.Regex('^📤 Экспорт лидов$')
     prompt_menu_button_filter = filters.Regex('^📜 Управление промптом$')
     broadcast_menu_button_filter = filters.Regex('^📣 Рассылка$')
     debug_button_filter = filters.Regex('^🕵️‍♂️ Отладка ответа$')
-    quiz_management_button_filter = filters.Regex('^🧩 Управление квизом$')
+    checklist_management_button_filter = filters.Regex('^🧩 Управление Чек-листом$')
 
     form_text_filter = filters.TEXT & ~filters.COMMAND & ~cancel_filter
 
@@ -88,26 +88,25 @@ def register_handlers(app: Application):
     app.add_handler(MessageHandler(export_button_filter, admin_handlers.export_leads))
     app.add_handler(MessageHandler(prompt_menu_button_filter, admin_handlers.prompt_management_menu))
     app.add_handler(MessageHandler(debug_button_filter, admin_handlers.last_answer_debug))
-    app.add_handler(MessageHandler(quiz_management_button_filter, admin_handlers.quiz_management_menu))
+    app.add_handler(MessageHandler(checklist_management_button_filter, admin_handlers.checklist_management_menu))
 
-    # ИЗМЕНЕНИЕ: Регистрируем новый обработчик для инлайн-кнопки "Свяжитесь со мной"
-    app.add_handler(CallbackQueryHandler(user_handlers.quiz_answer, pattern='^quiz_step_'))
-    app.add_handler(CallbackQueryHandler(user_handlers.start_quiz_from_prompt, pattern='^start_quiz_from_prompt$'))
+    app.add_handler(CallbackQueryHandler(user_handlers.checklist_answer, pattern='^quiz_step_'))
+    app.add_handler(CallbackQueryHandler(user_handlers.start_checklist_from_prompt, pattern='^start_quiz_from_prompt$'))
     app.add_handler(CallbackQueryHandler(user_handlers.request_human_contact_inline, pattern='^request_human_contact$'))
 
     app.add_handler(form_conv_handler)
     app.add_handler(broadcast_conv_handler)
 
-    app.add_handler(MessageHandler(quiz_button_filter, user_handlers.start_quiz))
+    app.add_handler(MessageHandler(checklist_button_filter, user_handlers.start_checklist))
     app.add_handler(MessageHandler(contact_button_filter, user_handlers.contact_human))
     app.add_handler(MessageHandler(filters.VOICE, user_handlers.handle_voice_message))
     
     text_filter = (
         filters.TEXT & ~filters.COMMAND & ~form_button_filter & 
-        ~contact_button_filter & ~quiz_button_filter & ~stats_button_filter &
+        ~contact_button_filter & ~checklist_button_filter & ~stats_button_filter &
         ~export_button_filter & ~prompt_menu_button_filter & 
         ~broadcast_menu_button_filter & ~debug_button_filter &
-        ~quiz_management_button_filter &
+        ~checklist_management_button_filter &
         ~filters.Regex('^✅ Отправить всем$') & ~filters.Regex('^📝 Редактировать$') & ~cancel_filter
     )
     app.add_handler(MessageHandler(text_filter, user_handlers.handle_text_message))
@@ -117,6 +116,7 @@ async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> A
     app.bot_data.update(common_services)
     app.bot_data['client_id'] = client_config['id']
     app.bot_data['manager_contact'] = client_config['manager_contact']
+    app.bot_data['checklist_data'] = client_config.get('checklist_data')
     app.bot_data['quiz_data'] = client_config.get('quiz_data')
     app.bot_data['google_sheet_id'] = client_config.get('google_sheet_id')
     register_handlers(app)
