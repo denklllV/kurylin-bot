@@ -16,10 +16,15 @@ from src.shared.config import GET_NAME, GET_DEBT, GET_INCOME, GET_REGION
 
 # --- Вспомогательные функции, общие для всех обработчиков ---
 def get_client_context(context: ContextTypes.DEFAULT_TYPE) -> (int, str):
-    """Извлекает client_id и manager_contact из контекста бота."""
     client_id = context.bot_data.get('client_id')
     manager_contact = context.bot_data.get('manager_contact')
     return client_id, manager_contact
+
+# НОВАЯ ФУНКЦИЯ: Надежное экранирование для MarkdownV2
+def escape_markdown_v2(text: str) -> str:
+    """Экранирует все зарезервированные символы для Telegram MarkdownV2."""
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 # --- Основные обработчики для пользователей ---
 
@@ -67,16 +72,14 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     
     quiz_completed, _ = ai_service.repo.get_user_quiz_status(user_id, client_id)
     reply_markup = get_main_keyboard(context)
-    
-    # ИЗМЕНЕНИЕ: Всегда используем MarkdownV2 для ответов AI.
     parse_mode = ParseMode.MARKDOWN_V2
     
     quiz_data = context.bot_data.get('quiz_data')
     if quiz_data and not quiz_completed:
         quiz_prompt_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎯 Пройти квиз для точной оценки", callback_data="start_quiz_from_prompt")]])
         reply_markup = quiz_prompt_keyboard
-        # Экранируем символы для MarkdownV2, которые могут быть в ответе AI
-        escaped_text = response_text.replace(".", "\\.").replace("-", "\\-").replace("!", "\\!")
+        # ИЗМЕНЕНИЕ: Используем новую надежную функцию экранирования
+        escaped_text = escape_markdown_v2(response_text)
         response_text = escaped_text + "\n\n_Чтобы я мог дать более точную рекомендацию, пройдите короткий квиз\\._"
     
     await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
@@ -119,7 +122,6 @@ async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=get_main_keyboard(context))
 
 # --- Логика Квиза ---
-
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client_id, _ = get_client_context(context)
     quiz_data = context.bot_data.get('quiz_data')
@@ -178,9 +180,7 @@ async def start_quiz_from_prompt(update: Update, context: ContextTypes.DEFAULT_T
     keyboard = make_quiz_keyboard(question_data["answers"], step)
     await query.message.reply_text(question_data["question"], reply_markup=keyboard)
 
-
 # --- Логика анкеты (ConversationHandler) ---
-
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Отлично! Приступаем к заполнению анкеты.\n\nКак я могу к вам обращаться?", reply_markup=cancel_keyboard)
     return GET_NAME
