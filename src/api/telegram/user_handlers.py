@@ -67,15 +67,18 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     
     quiz_completed, _ = ai_service.repo.get_user_quiz_status(user_id, client_id)
     reply_markup = get_main_keyboard(context)
-    parse_mode = None 
+    
+    # ИЗМЕНЕНИЕ: Всегда используем MarkdownV2 для ответов AI.
+    parse_mode = ParseMode.MARKDOWN_V2
     
     quiz_data = context.bot_data.get('quiz_data')
     if quiz_data and not quiz_completed:
         quiz_prompt_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎯 Пройти квиз для точной оценки", callback_data="start_quiz_from_prompt")]])
         reply_markup = quiz_prompt_keyboard
-        response_text += "\n\n_Чтобы я мог дать более точную рекомендацию, пройдите короткий квиз\\._"
-        parse_mode = ParseMode.MARKDOWN_V2
-
+        # Экранируем символы для MarkdownV2, которые могут быть в ответе AI
+        escaped_text = response_text.replace(".", "\\.").replace("-", "\\-").replace("!", "\\!")
+        response_text = escaped_text + "\n\n_Чтобы я мог дать более точную рекомендацию, пройдите короткий квиз\\._"
+    
     await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
