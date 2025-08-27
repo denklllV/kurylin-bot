@@ -1,11 +1,21 @@
 # START OF FILE: gunicorn_conf.py
 
 import asyncio
+import os
 from telegram import Update, Bot
 from telegram.ext import Application
 from src.shared.logger import logger
 from src.shared.config import PUBLIC_APP_URL
 from src.infra.clients.supabase_repo import SupabaseRepo
+
+# ИЗМЕНЕНИЕ: Добавляем конфигурацию порта
+# Gunicorn будет брать порт из переменной окружения, которую предоставляет Render
+port = os.environ.get("PORT", "8000")
+bind = f"0.0.0.0:{port}"
+workers = 4
+worker_class = "uvicorn.workers.UvicornWorker"
+log_level = "debug"
+
 
 def when_ready(server):
     """
@@ -36,7 +46,6 @@ def when_ready(server):
             except Exception as e:
                 logger.error(f"Error setting webhook for bot ...{token[-4:]}: {e}", exc_info=True)
 
-    # Запускаем асинхронную функцию в новом цикле событий
     try:
         asyncio.run(set_webhooks())
     except Exception as e:
