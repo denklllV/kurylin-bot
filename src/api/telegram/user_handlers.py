@@ -71,6 +71,8 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
         action_buttons.append(InlineKeyboardButton("Пройти чек-лист", callback_data="start_quiz_from_prompt"))
     
     action_buttons.append(InlineKeyboardButton("Свяжитесь со мной", callback_data="request_human_contact"))
+    
+    # ИЗМЕНЕНИЕ: Оборачиваем список кнопок в еще один список, чтобы они были в одном ряду.
     reply_markup = InlineKeyboardMarkup([action_buttons])
     
     parse_mode = ParseMode.MARKDOWN
@@ -119,7 +121,6 @@ async def request_human_contact_inline(update: Update, context: ContextTypes.DEF
     effective_update.effective_user = query.from_user
     await contact_human(effective_update, context)
 
-# --- Логика Чек-листа ---
 async def start_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     checklist_data = context.bot_data.get('checklist_data')
     if not checklist_data:
@@ -176,7 +177,6 @@ async def start_checklist_from_prompt(update: Update, context: ContextTypes.DEFA
     keyboard = make_quiz_keyboard(question_data["answers"], step)
     await query.message.reply_text(question_data["question"], reply_markup=keyboard)
 
-# --- Логика анкеты (ConversationHandler) ---
 async def start_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Отлично! Приступаем к заполнению анкеты.\n\nКак я могу к вам обращаться?", reply_markup=cancel_keyboard)
     return GET_NAME
