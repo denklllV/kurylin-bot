@@ -2,7 +2,6 @@
 
 import sys
 import os
-import asyncio
 import uvicorn
 from typing import Dict
 
@@ -17,7 +16,7 @@ from telegram.ext import (
 
 from src.shared.logger import logger
 from src.shared.config import (
-    PUBLIC_APP_URL, PORT, RUN_MODE, 
+    PORT, RUN_MODE, 
     GET_NAME, GET_DEBT, GET_INCOME, GET_REGION,
     GET_BROADCAST_MESSAGE, GET_BROADCAST_MEDIA, CONFIRM_BROADCAST
 )
@@ -31,7 +30,6 @@ from src.api.telegram import user_handlers, admin_handlers
 
 fastapi_app = FastAPI(docs_url=None, redoc_url=None)
 bots: Dict[str, Application] = {}
-client_configs: Dict[str, Dict] = {}
 
 def register_handlers(app: Application):
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
@@ -111,23 +109,16 @@ def register_handlers(app: Application):
     )
     app.add_handler(MessageHandler(text_filter, user_handlers.handle_text_message))
 
-async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> Application:
+async def setup_bot_instance(token: str, client_config: Dict, common_services: Dict) -> Application:
     app = Application.builder().token(token).build()
     app.bot_data.update(common_services)
     app.bot_data['client_id'] = client_config['id']
-    app.bot_data['manager_contact'] = client_config['manager_contact']
+    app.bot_data['manager_contact'] = client_config.get('manager_contact')
     app.bot_data['checklist_data'] = client_config.get('checklist_data')
     app.bot_data['quiz_data'] = client_config.get('quiz_data')
     app.bot_data['google_sheet_id'] = client_config.get('google_sheet_id')
     register_handlers(app)
     await app.initialize()
-    await app.start()
-    if RUN_MODE == 'WEBHOOK':
-        webhook_url = f"{PUBLIC_APP_URL}/{token}"
-        if not (await app.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)):
-            logger.error(f"Failed to set webhook for bot ...{token[-4:]} to {webhook_url}")
-        else:
-            logger.info(f"Webhook set for bot ...{token[-4:]} to {webhook_url}")
     return app
 
 @fastapi_app.post("/{bot_token}")
@@ -140,7 +131,7 @@ async def handle_webhook(bot_token: str, request: Request):
 
 @fastapi_app.on_event("startup")
 async def startup_event():
-    logger.info("Application startup...")
+    logger.info("FastAPI application startup... (Worker process)")
     supabase_repo = SupabaseRepo()
     common_services = {
         'ai_service': AIService(OpenRouterClient(), WhisperClient(), supabase_repo),
@@ -150,27 +141,22 @@ async def startup_event():
     }
     clients = supabase_repo.get_active_clients()
     if not clients:
-        logger.error("No active clients found.")
+        logger.error("No active clients found for this worker.")
         return
     for client in clients:
-        bots[client['bot_token']] = await setup_bot(client['bot_token'], client, common_services)
-    logger.info(f"Initialized {len(bots)} bot(s).")
+        token = client.get('bot_token')
+        if not token:
+            continue
+        bots[token] = await setup_bot_instance(token, client, common_services)
+        if RUN_MODE == 'WEBHOOK':
+            await bots[token].start()
+    logger.info(f"Initialized and started {len(bots)} bot(s) in this worker.")
     
 @fastapi_app.on_event("shutdown")
 async def shutdown_event():
-    logger.info("Application shutdown...")
+    logger.info("Application shutdown... (Worker process)")
     for app in bots.values():
         await app.stop()
         await app.shutdown()
-
-def main():
-    if RUN_MODE == 'POLLING':
-        logger.error("POLLING mode is not supported.")
-        return
-    logger.info("Starting Uvicorn server...")
-    uvicorn.run(app=fastapi_app, host="0.0.0.0", port=PORT)
-
-if __name__ == "__main__":
-    main()
 
 # END OF FILE: main.py

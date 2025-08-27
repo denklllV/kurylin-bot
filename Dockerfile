@@ -29,9 +29,7 @@ RUN chown -R appuser:appgroup /app
 # Переключаемся на безопасного пользователя
 USER appuser
 
-# ИЗМЕНЕНИЕ: Указываем новую, продакшн-готовую команду для запуска
-# Запускаем Gunicorn, который будет управлять Uvicorn.
-# Render будет слушать порт, который Gunicorn откроет по умолчанию.
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:fastapi_app"]
+# Указываем команду для запуска приложения, используя Gunicorn с нашим конфигом
+CMD ["gunicorn", "-c", "./gunicorn_conf.py", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:fastapi_app"]
 
 # END OF FILE: Dockerfile
