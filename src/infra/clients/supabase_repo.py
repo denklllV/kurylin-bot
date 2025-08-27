@@ -1,7 +1,7 @@
 # START OF FILE: src/infra/clients/supabase_repo.py
 
 from supabase import create_client, Client
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import json
 
 from src.shared.logger import logger
@@ -15,8 +15,7 @@ class SupabaseRepo:
 
     def get_active_clients(self) -> List[Dict[str, Any]]:
         try:
-            # ИЗМЕНЕНИЕ: Добавляем google_sheet_id
-            select_query = 'id, client_name, bot_token, manager_contact, quiz_data, google_sheet_id'
+            select_query = 'id, client_name, bot_token, manager_contact, checklist_data, quiz_data, google_sheet_id'
             response = self.client.table('clients').select(select_query).eq('status', 'active').execute()
             logger.info(f"Loaded {len(response.data)} active client(s).")
             return response.data
@@ -24,7 +23,6 @@ class SupabaseRepo:
             logger.error(f"FATAL: Could not load clients from Supabase. Error: {e}", exc_info=True)
             return []
 
-    # НОВЫЙ МЕТОД: Получение данных для экспорта
     def get_leads_for_export(self, client_id: int, start_date: str, end_date: str) -> List[Dict[str, Any]]:
         """Вызывает RPC для получения лидов в диапазоне дат."""
         try:
@@ -39,7 +37,6 @@ class SupabaseRepo:
             logger.error(f"Error getting leads for export for client {client_id}: {e}", exc_info=True)
             return []
     
-    # ... (остальные методы без изменений)
     def get_client_bot_token(self, client_id: int) -> str | None:
         try:
             response = self.client.table('clients').select('bot_token').eq('id', client_id).single().execute()
@@ -78,6 +75,18 @@ class SupabaseRepo:
             return True
         except Exception as e:
             logger.error(f"Error updating system prompt for client {client_id}: {e}", exc_info=True)
+            return False
+
+    # НОВЫЙ МЕТОД: Обновляет или удаляет чек-лист для клиента
+    def update_client_checklist(self, client_id: int, checklist_data: Optional[Dict]) -> bool:
+        """Обновляет поле checklist_data для указанного клиента. Принимает dict или None."""
+        try:
+            self.client.table('clients').update({'checklist_data': checklist_data}).eq('id', client_id).execute()
+            status = "updated" if checklist_data else "deleted"
+            logger.info(f"Checklist for client {client_id} has been {status}.")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating checklist for client {client_id}: {e}", exc_info=True)
             return False
 
     def save_user(self, user: User, client_id: int):
