@@ -72,12 +72,14 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     
     action_buttons.append(InlineKeyboardButton("Свяжитесь со мной", callback_data="request_human_contact"))
     
-    # ИЗМЕНЕНИЕ: Оборачиваем список кнопок в еще один список, чтобы они были в одном ряду.
     reply_markup = InlineKeyboardMarkup([action_buttons])
+    
+    disclaimer = "\n\n*Важно: эта информация носит справочный характер и не является юридической консультацией.*"
+    final_text = response_text + disclaimer
     
     parse_mode = ParseMode.MARKDOWN
     
-    await update.message.reply_text(response_text, reply_markup=reply_markup, parse_mode=parse_mode)
+    await update.message.reply_text(final_text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _process_user_message(update, context, update.message.text)
@@ -212,5 +214,4 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Заполнение анкеты отменено.", reply_markup=get_main_keyboard(context))
     context.user_data.clear()
     return ConversationHandler.END
-
 # END OF FILE: src/api/telegram/user_handlers.py
