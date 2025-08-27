@@ -2,6 +2,7 @@
 
 import sys
 import os
+import asyncio
 import uvicorn
 from typing import Dict
 
@@ -16,9 +17,10 @@ from telegram.ext import (
 
 from src.shared.logger import logger
 from src.shared.config import (
-    PORT, RUN_MODE, 
+    PUBLIC_APP_URL, PORT, RUN_MODE, 
     GET_NAME, GET_DEBT, GET_INCOME, GET_REGION,
-    GET_BROADCAST_MESSAGE, GET_BROADCAST_MEDIA, CONFIRM_BROADCAST
+    GET_BROADCAST_MESSAGE, GET_BROADCAST_MEDIA, CONFIRM_BROADCAST,
+    CHECKLIST_ACTION, CHECKLIST_UPLOAD_FILE
 )
 from src.infra.clients.supabase_repo import SupabaseRepo
 from src.infra.clients.openrouter_client import OpenRouterClient
@@ -30,6 +32,7 @@ from src.api.telegram import user_handlers, admin_handlers
 
 fastapi_app = FastAPI(docs_url=None, redoc_url=None)
 bots: Dict[str, Application] = {}
+client_configs: Dict[str, Dict] = {}
 
 def register_handlers(app: Application):
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
@@ -73,6 +76,23 @@ def register_handlers(app: Application):
         fallbacks=[CommandHandler('cancel', admin_handlers.broadcast_cancel), MessageHandler(cancel_filter, admin_handlers.broadcast_cancel)],
     )
     
+    # НОВЫЙ ConversationHandler для управления чек-листом
+    checklist_conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(checklist_management_button_filter, admin_handlers.checklist_management_start)],
+        states={
+            CHECKLIST_ACTION: [
+                CallbackQueryHandler(admin_handlers.checklist_view, pattern='^checklist_view$'),
+                CallbackQueryHandler(admin_handlers.checklist_delete, pattern='^checklist_delete$'),
+                CallbackQueryHandler(admin_handlers.checklist_upload_prompt, pattern='^checklist_upload$'),
+                CallbackQueryHandler(admin_handlers.checklist_back, pattern='^checklist_back$'),
+            ],
+            CHECKLIST_UPLOAD_FILE: [
+                MessageHandler(filters.Document.ALL, admin_handlers.checklist_receive_file)
+            ]
+        },
+        fallbacks=[CommandHandler('cancel', admin_handlers.checklist_cancel), MessageHandler(cancel_filter, admin_handlers.checklist_cancel)],
+    )
+    
     app.add_handler(CommandHandler("start", user_handlers.start))
     app.add_handler(CommandHandler("admin", admin_handlers.admin_panel))
     app.add_handler(CommandHandler("stats", admin_handlers.stats))
@@ -86,14 +106,14 @@ def register_handlers(app: Application):
     app.add_handler(MessageHandler(export_button_filter, admin_handlers.export_leads))
     app.add_handler(MessageHandler(prompt_menu_button_filter, admin_handlers.prompt_management_menu))
     app.add_handler(MessageHandler(debug_button_filter, admin_handlers.last_answer_debug))
-    app.add_handler(MessageHandler(checklist_management_button_filter, admin_handlers.checklist_management_menu))
-
+    
     app.add_handler(CallbackQueryHandler(user_handlers.checklist_answer, pattern='^quiz_step_'))
     app.add_handler(CallbackQueryHandler(user_handlers.start_checklist_from_prompt, pattern='^start_quiz_from_prompt$'))
     app.add_handler(CallbackQueryHandler(user_handlers.request_human_contact_inline, pattern='^request_human_contact$'))
 
     app.add_handler(form_conv_handler)
     app.add_handler(broadcast_conv_handler)
+    app.add_handler(checklist_conv_handler)
 
     app.add_handler(MessageHandler(checklist_button_filter, user_handlers.start_checklist))
     app.add_handler(MessageHandler(contact_button_filter, user_handlers.contact_human))
@@ -109,7 +129,7 @@ def register_handlers(app: Application):
     )
     app.add_handler(MessageHandler(text_filter, user_handlers.handle_text_message))
 
-async def setup_bot_instance(token: str, client_config: Dict, common_services: Dict) -> Application:
+async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> Application:
     app = Application.builder().token(token).build()
     app.bot_data.update(common_services)
     app.bot_data['client_id'] = client_config['id']
@@ -119,6 +139,13 @@ async def setup_bot_instance(token: str, client_config: Dict, common_services: D
     app.bot_data['google_sheet_id'] = client_config.get('google_sheet_id')
     register_handlers(app)
     await app.initialize()
+    await app.start()
+    if RUN_MODE == 'WEBHOOK':
+        webhook_url = f"{PUBLIC_APP_URL}/{token}"
+        if not (await app.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)):
+            logger.error(f"Failed to set webhook for bot ...{token[-4:]} to {webhook_url}")
+        else:
+            logger.info(f"Webhook set for bot ...{token[-4:]} to {webhook_url}")
     return app
 
 @fastapi_app.post("/{bot_token}")
@@ -131,7 +158,7 @@ async def handle_webhook(bot_token: str, request: Request):
 
 @fastapi_app.on_event("startup")
 async def startup_event():
-    logger.info("FastAPI application startup... (Worker process)")
+    logger.info("Application startup...")
     supabase_repo = SupabaseRepo()
     common_services = {
         'ai_service': AIService(OpenRouterClient(), WhisperClient(), supabase_repo),
@@ -141,22 +168,27 @@ async def startup_event():
     }
     clients = supabase_repo.get_active_clients()
     if not clients:
-        logger.error("No active clients found for this worker.")
+        logger.error("No active clients found.")
         return
     for client in clients:
-        token = client.get('bot_token')
-        if not token:
-            continue
-        bots[token] = await setup_bot_instance(token, client, common_services)
-        if RUN_MODE == 'WEBHOOK':
-            await bots[token].start()
-    logger.info(f"Initialized and started {len(bots)} bot(s) in this worker.")
+        bots[client['bot_token']] = await setup_bot(client['bot_token'], client, common_services)
+    logger.info(f"Initialized {len(bots)} bot(s).")
     
 @fastapi_app.on_event("shutdown")
 async def shutdown_event():
-    logger.info("Application shutdown... (Worker process)")
+    logger.info("Application shutdown...")
     for app in bots.values():
         await app.stop()
         await app.shutdown()
+
+def main():
+    if RUN_MODE == 'POLLING':
+        logger.error("POLLING mode is not supported.")
+        return
+    logger.info("Starting Uvicorn server...")
+    uvicorn.run(app=fastapi_app, host="0.0.0.0", port=PORT)
+
+if __name__ == "__main__":
+    main()
 
 # END OF FILE: main.py

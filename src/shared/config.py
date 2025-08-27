@@ -11,8 +11,6 @@ SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 HF_API_KEY = os.getenv('HF_API_KEY')
 GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
-# Глобальный GOOGLE_SHEET_ID больше не используется, он берется из БД
-# GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 
 # --- AI Models & APIs ---
 LLM_MODEL_NAME = os.getenv('LLM_MODEL_NAME', "tngtech/deepseek-r1t2-chimera:free")
@@ -30,8 +28,10 @@ RUN_MODE = os.getenv('RUN_MODE', 'WEBHOOK')
 # Состояния для анкеты
 GET_NAME, GET_DEBT, GET_INCOME, GET_REGION = range(4)
 
-# НОВЫЕ СОСТОЯНИЯ: Для мастера рассылок
+# Состояния для мастера рассылок
 GET_BROADCAST_MESSAGE, GET_BROADCAST_MEDIA, CONFIRM_BROADCAST = range(4, 7)
 
+# НОВЫЕ СОСТОЯНИЯ: Для управления чек-листом
+CHECKLIST_ACTION, CHECKLIST_UPLOAD_FILE = range(7, 9)
 
 # END OF FILE: src/shared/config.py

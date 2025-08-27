@@ -1,5 +1,6 @@
 # START OF FILE: src/api/telegram/admin_handlers.py
 
+import json
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
@@ -10,12 +11,13 @@ from src.app.services.lead_service import LeadService
 from src.app.services.analytics_service import AnalyticsService
 from src.api.telegram.keyboards import (
     admin_keyboard, cancel_keyboard, 
-    broadcast_confirm_keyboard
+    broadcast_confirm_keyboard, checklist_management_keyboard
 )
 from src.infra.clients.sheets_client import GoogleSheetsClient
 from src.shared.logger import logger
 from src.shared.config import (
-    GET_BROADCAST_MESSAGE, GET_BROADCAST_MEDIA, CONFIRM_BROADCAST
+    GET_BROADCAST_MESSAGE, GET_BROADCAST_MEDIA, CONFIRM_BROADCAST,
+    CHECKLIST_ACTION, CHECKLIST_UPLOAD_FILE
 )
 
 # --- Вспомогательные функции, общие для всех обработчиков ---
@@ -94,8 +96,6 @@ async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client_id, _ = get_client_context(context)
     await update.message.reply_text(f"✅ Бот в сети. ID клиента: {client_id}.")
 
-# --- Управление Промптом ---
-
 async def get_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     client_id, _ = get_client_context(context)
@@ -131,17 +131,102 @@ async def prompt_management_menu(update: Update, context: ContextTypes.DEFAULT_T
         parse_mode=ParseMode.HTML
     )
 
-# --- Управление Чек-листом (заглушка) ---
+# --- Мастер управления Чек-листом ---
 
-async def checklist_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update, context): return
+async def checklist_management_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update, context): return ConversationHandler.END
     await update.message.reply_text(
-        "<b>Управление Чек-листом:</b>\n\nЭта функция находится в разработке.",
-        parse_mode=ParseMode.HTML
+        "Меню управления Чек-листом. Выберите действие:",
+        reply_markup=checklist_management_keyboard
     )
+    return CHECKLIST_ACTION
+
+async def checklist_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    client_id, _ = get_client_context(context)
+    checklist_data = context.bot_data.get('checklist_data')
+    if checklist_data:
+        pretty_json = json.dumps(checklist_data, indent=2, ensure_ascii=False)
+        await query.message.reply_text(f"<b>Текущий чек-лист (Клиент ID: {client_id}):</b>\n\n<pre>{pretty_json}</pre>", parse_mode=ParseMode.HTML)
+    else:
+        await query.message.reply_text("Чек-лист для вашего клиента еще не загружен.")
+    # Остаемся в том же состоянии, чтобы можно было выбрать другое действие
+    return CHECKLIST_ACTION
+
+async def checklist_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    client_id, _ = get_client_context(context)
+    lead_service: LeadService = context.application.bot_data['lead_service']
+    success = lead_service.repo.update_client_checklist(client_id, None)
+    if success:
+        context.bot_data['checklist_data'] = None
+        await query.message.edit_text("✅ Чек-лист успешно удален.")
+    else:
+        await query.message.edit_text("❌ Произошла ошибка при удалении чек-листа.")
+    return ConversationHandler.END
+
+async def checklist_upload_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    await query.message.edit_text(
+        "Пожалуйста, отправьте мне файл в формате `.json` с новой структурой чек-листа. Для отмены используйте команду /cancel.",
+        reply_markup=None
+    )
+    return CHECKLIST_UPLOAD_FILE
+
+async def checklist_receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    client_id, _ = get_client_context(context)
+    if not update.message.document:
+        await update.message.reply_text("Пожалуйста, отправьте именно файл.")
+        return CHECKLIST_UPLOAD_FILE
+    
+    doc = update.message.document
+    if not doc.file_name.lower().endswith('.json'):
+        await update.message.reply_text("Ошибка: Файл должен иметь расширение `.json`. Попробуйте снова.")
+        return CHECKLIST_UPLOAD_FILE
+
+    file = await doc.get_file()
+    file_content_bytes = await file.download_as_bytearray()
+    
+    try:
+        file_content_str = file_content_bytes.decode('utf-8')
+        new_checklist_data = json.loads(file_content_str)
+        if not isinstance(new_checklist_data, list) or not all(isinstance(item, dict) for item in new_checklist_data):
+            raise ValueError("JSON должен быть списком объектов")
+        
+        lead_service: LeadService = context.application.bot_data['lead_service']
+        success = lead_service.repo.update_client_checklist(client_id, new_checklist_data)
+        
+        if success:
+            context.bot_data['checklist_data'] = new_checklist_data
+            await update.message.reply_text("✅ Новый чек-лист успешно загружен и сохранен!", reply_markup=admin_keyboard)
+            return ConversationHandler.END
+        else:
+            await update.message.reply_text("❌ Ошибка при сохранении в базу данных.", reply_markup=admin_keyboard)
+            return ConversationHandler.END
+            
+    except (json.JSONDecodeError, ValueError) as e:
+        await update.message.reply_text(f"❌ Ошибка в файле: {e}. Проверьте структуру и попробуйте снова.")
+        return CHECKLIST_UPLOAD_FILE
+    except Exception as e:
+        logger.error(f"Error processing checklist file for client {client_id}: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Непредвиденная ошибка: {e}", reply_markup=admin_keyboard)
+        return ConversationHandler.END
+
+async def checklist_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    await query.message.delete()
+    return ConversationHandler.END
+
+async def checklist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Управление чек-листом отменено.", reply_markup=admin_keyboard)
+    return ConversationHandler.END
+
 
 # --- Мастер Рассылок (ConversationHandler) ---
-
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update, context): return ConversationHandler.END
     await update.message.reply_text(

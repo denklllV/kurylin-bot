@@ -10,13 +10,11 @@ def get_main_keyboard(context: ContextTypes.DEFAULT_TYPE) -> ReplyKeyboardMarkup
     конфигурация чек-листа существует для данного клиента.
     """
     base_buttons = [
-        ['📝 Заполнить анкету', '🧑‍💼 Связаться с человеком'],
+        ['📝 Заполнить анкету', '🧑‍💼 Святься с человеком'],
     ]
     
-    # ИЗМЕНЕНИЕ: Проверяем checklist_data вместо quiz_data
     checklist_data = context.bot_data.get('checklist_data')
     if checklist_data:
-        # ИЗМЕНЕНИЕ: Меняем название кнопки
         base_buttons.append(['🎯 Чек-лист'])
         
     return ReplyKeyboardMarkup(base_buttons, resize_keyboard=True)
@@ -25,7 +23,6 @@ admin_keyboard = ReplyKeyboardMarkup(
     [
         ['📊 Статистика', '📤 Экспорт лидов'],
         ['📜 Управление промптом', '📣 Рассылка'],
-        # ИЗМЕНЕНИЕ: Меняем название кнопки
         ['🧩 Управление Чек-листом', '🕵️‍♂️ Отладка ответа']
     ],
     resize_keyboard=True
@@ -43,6 +40,20 @@ broadcast_confirm_keyboard = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True,
     one_time_keyboard=True
+)
+
+# НОВАЯ КЛАВИАТУРА: Меню для управления чек-листом
+checklist_management_keyboard = InlineKeyboardMarkup(
+    [
+        [
+            InlineKeyboardButton("📥 Загрузить новый", callback_data="checklist_upload"),
+            InlineKeyboardButton("🗑️ Удалить текущий", callback_data="checklist_delete")
+        ],
+        [
+            InlineKeyboardButton("👀 Посмотреть текущий", callback_data="checklist_view"),
+            InlineKeyboardButton("⬅️ Назад в админ-меню", callback_data="checklist_back")
+        ]
+    ]
 )
 
 
