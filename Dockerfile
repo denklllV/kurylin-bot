@@ -29,7 +29,9 @@ RUN chown -R appuser:appgroup /app
 # Переключаемся на безопасного пользователя
 USER appuser
 
-# Указываем команду для запуска приложения, используя Gunicorn с нашим конфигом
-CMD ["gunicorn", "-c", "./gunicorn_conf.py", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "main:fastapi_app"]
+# ИЗМЕНЕНИЕ: Указываем более явную и надежную команду запуска для Render
+# -b 0.0.0.0:${PORT} - явно привязываемся к порту, который предоставляет Render.
+# --log-level debug - включаем подробное логирование для Gunicorn.
+CMD ["gunicorn", "-c", "./gunicorn_conf.py", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:${PORT}", "--log-level", "debug", "main:fastapi_app"]
 
 # END OF FILE: Dockerfile
