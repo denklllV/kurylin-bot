@@ -101,6 +101,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await _process_user_message(update, context, transcribed_text)
     else:
         await update.message.reply_text("К сожалению, не удалось распознать речь. Попробуйте записать снова или, пожалуйста, напишите ваш вопрос текстом.")
+        return
 
 async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _, manager_contact = get_client_context(context)
