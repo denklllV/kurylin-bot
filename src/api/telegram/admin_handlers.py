@@ -90,6 +90,45 @@ async def last_answer_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
               f"<b>--- Использованная история диалога ---</b>\n{history_report}")
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
+# НОВАЯ КОМАНДА: Утилита для получения file_id
+async def get_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возвращает file_id для любого отправленного документа, фото, видео или аудио."""
+    if not is_admin(update, context): return
+    
+    # Сначала проверяем, было ли сообщение ответом на другое сообщение
+    target_message = update.message.reply_to_message or update.message
+    
+    file_id = None
+    file_type = None
+
+    if target_message.document:
+        file_id = target_message.document.file_id
+        file_type = "документа"
+    elif target_message.photo:
+        file_id = target_message.photo[-1].file_id # Берем самое большое разрешение
+        file_type = "фото"
+    elif target_message.video:
+        file_id = target_message.video.file_id
+        file_type = "видео"
+    elif target_message.audio:
+        file_id = target_message.audio.file_id
+        file_type = "аудио"
+    
+    if file_id and file_type:
+        response_text = (
+            f"<b>ID этого {file_type}:</b>\n\n"
+            f"<code>{file_id}</code>\n\n"
+            "Используйте этот ID в поле `lead_magnet_file_id` в вашей базе данных."
+        )
+        await target_message.reply_text(response_text, parse_mode=ParseMode.HTML)
+    else:
+        await update.message.reply_text(
+            "<b>Как использовать:</b>\n\n"
+            "1. Отправьте в этот чат нужный файл (PDF, картинку и т.д.).\n"
+            "2. Ответьте на сообщение с этим файлом командой /get_file_id.",
+            parse_mode=ParseMode.HTML
+        )
+
 async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     client_id, _ = get_client_context(context)

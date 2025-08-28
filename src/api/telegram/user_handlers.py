@@ -1,11 +1,10 @@
-# START OF FILE: src/api/telegram/user_handlers.py
-
+# path: src/api/telegram/user_handlers.py
 import io
 import re
-from pydub import AudioSegment
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
+from telegram.error import TelegramError
 
 from src.app.services.ai_service import AIService
 from src.app.services.lead_service import LeadService
@@ -93,11 +92,11 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     voice_bytes = await voice_file.download_as_bytearray()
     try:
         ogg_stream = io.BytesIO(voice_bytes)
-        audio = AudioSegment.from_file(ogg_stream)
-        mp3_stream = io.BytesIO()
-        audio.export(mp3_stream, format="mp3")
-        mp3_stream.seek(0)
-        transcribed_text = ai_service.transcribe_voice(mp3_stream.read())
+        # audio = AudioSegment.from_file(ogg_stream)
+        # mp3_stream = io.BytesIO()
+        # audio.export(mp3_stream, format="mp3")
+        # mp3_stream.seek(0)
+        transcribed_text = ai_service.transcribe_voice(ogg_stream.read())
     except Exception as e:
         transcribed_text = None
     if transcribed_text:
@@ -207,6 +206,31 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     lead_service.bot = context.bot
     await lead_service.save_lead(user, context.user_data, client_id, manager_contact)
     await update.message.reply_text("Спасибо за ваши ответы! Наши специалисты скоро свяжутся с вами.", reply_markup=get_main_keyboard(context))
+
+    # --- ЛОГИКА ОТПРАВКИ ЛИД-МАГНИТА ---
+    lead_magnet_enabled = context.bot_data.get('lead_magnet_enabled')
+    lead_magnet_file_id = context.bot_data.get('lead_magnet_file_id')
+
+    if lead_magnet_enabled and lead_magnet_file_id:
+        logger.info(f"Client {client_id} has lead magnet enabled. Sending file...")
+        try:
+            # Отправляем сообщение-задержку для улучшения UX
+            await update.message.reply_text("🎁 В качестве благодарности, отправляю вам полезный материал...")
+            await update.message.reply_chat_action(ChatAction.UPLOAD_DOCUMENT)
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=lead_magnet_file_id,
+                caption="Здесь ваш бонусный материал!"
+            )
+        except TelegramError as e:
+            logger.error(
+                f"Failed to send lead magnet file {lead_magnet_file_id} "
+                f"for client {client_id} to user {user.id}. Error: {e}",
+                exc_info=True
+            )
+            await update.message.reply_text("К сожалению, не удалось отправить бонусный файл. Мы решим эту проблему и вышлем его вам позже.")
+    # -------------------------------------
+
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -214,4 +238,4 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Заполнение анкеты отменено.", reply_markup=get_main_keyboard(context))
     context.user_data.clear()
     return ConversationHandler.END
-# END OF FILE: src/api/telegram/user_handlers.py
+# path: src/api/telegram/user_handlers.py

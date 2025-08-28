@@ -14,7 +14,8 @@ class SupabaseRepo:
 
     def get_active_clients(self) -> List[Dict[str, Any]]:
         try:
-            select_query = 'id, client_name, bot_token, manager_contact, checklist_data, quiz_data, google_sheet_id'
+            # ИЗМЕНЕНИЕ: Добавляем новые поля в запрос
+            select_query = 'id, client_name, bot_token, manager_contact, checklist_data, quiz_data, google_sheet_id, lead_magnet_enabled, lead_magnet_file_id'
             response = self.client.table('clients').select(select_query).eq('status', 'active').execute()
             logger.info(f"Loaded {len(response.data)} active client(s).")
             return response.data
@@ -22,7 +23,7 @@ class SupabaseRepo:
             logger.error(f"FATAL: Could not load clients from Supabase. Error: {e}", exc_info=True)
             return []
 
-    # --- НОВЫЕ МЕТОДЫ ДЛЯ RAG ---
+    # --- Методы для RAG ---
     def insert_into_knowledge_base(self, records: List[Dict[str, Any]]):
         """Массово вставляет записи в таблицу knowledge_base."""
         try:
