@@ -11,3 +11,4 @@ pymorphy3==1.2.1
 uvicorn
 fastapi
 gunicorn
+sentence-transformers
