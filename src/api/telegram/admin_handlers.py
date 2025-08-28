@@ -17,16 +17,20 @@ from src.infra.clients.sheets_client import GoogleSheetsClient
 from src.shared.logger import logger
 from src.shared.config import (
     GET_BROADCAST_MESSAGE, GET_BROADCAST_MEDIA, CONFIRM_BROADCAST,
-    CHECKLIST_ACTION, CHECKLIST_UPLOAD_FILE
+    CHECKLIST_ACTION, CHECKLIST_UPLOAD_FILE,
+    # Импортируем переменные для проверки
+    OPENROUTER_API_KEY, SUPABASE_KEY, SUPABASE_URL, HF_API_KEY, GOOGLE_CREDENTIALS_JSON
 )
 
 # --- Вспомогательные функции, общие для всех обработчиков ---
 def get_client_context(context: ContextTypes.DEFAULT_TYPE) -> (int, str):
+    """Извлекает client_id и manager_contact из контекста бота."""
     client_id = context.bot_data.get('client_id')
     manager_contact = context.bot_data.get('manager_contact')
     return client_id, manager_contact
 
 def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Проверяет, является ли пользователь администратором."""
     _, manager_contact = get_client_context(context)
     return str(update.effective_user.id) == manager_contact
 
@@ -44,17 +48,13 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     client_id, _ = get_client_context(context)
     analytics_service: AnalyticsService = context.application.bot_data['analytics_service']
-    # Эта функция уже использует ChatAction.TYPING, что является правильной практикой
     await update.message.reply_chat_action(ChatAction.TYPING)
     report = analytics_service.generate_summary_report(client_id)
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
 async def export_leads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
-    
-    # ИЗМЕНЕНИЕ: Добавляем индикатор работы перед выполнением долгой операции
     await update.message.reply_chat_action(ChatAction.UPLOAD_DOCUMENT)
-    
     await update.message.reply_text("Начинаю экспорт. Это может занять до минуты...")
     client_id, _ = get_client_context(context)
     sheet_id = context.bot_data.get('google_sheet_id')
@@ -120,7 +120,55 @@ async def get_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     client_id, _ = get_client_context(context)
-    await update.message.reply_text(f"✅ Бот в сети. ID клиента: {client_id}.")
+    await update.message.reply_chat_action(ChatAction.TYPING)
+    
+    report_lines = [f"<b>--- 🩺 Health Check (Клиент ID: {client_id}) ---</b>"]
+    
+    # 1. Проверка Supabase
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            ai_service: AIService = context.application.bot_data['ai_service']
+            prompt = ai_service.repo.get_client_system_prompt(client_id)
+            if prompt is not None:
+                report_lines.append("✅ <b>Supabase:</b> OK")
+            else:
+                report_lines.append("⚠️ <b>Supabase:</b> Подключено, но промпт для клиента не найден.")
+        except Exception as e:
+            report_lines.append(f"❌ <b>Supabase:</b> Ошибка подключения: {e}")
+    else:
+        report_lines.append("❌ <b>Supabase:</b> Не заданы SUPABASE_URL или SUPABASE_KEY.")
+
+    # 2. Проверка OpenRouter (AI)
+    if OPENROUTER_API_KEY:
+        try:
+            ai_service: AIService = context.application.bot_data['ai_service']
+            await context.application.loop.run_in_executor(None, ai_service.or_client.client.models.list)
+            report_lines.append("✅ <b>OpenRouter (AI):</b> OK")
+        except Exception as e:
+            report_lines.append(f"❌ <b>OpenRouter (AI):</b> Ошибка API: {e}")
+    else:
+        report_lines.append("❌ <b>OpenRouter (AI):</b> Не задан OPENROUTER_API_KEY.")
+
+    # 3. Проверка Whisper (STT)
+    if HF_API_KEY:
+        report_lines.append("✅ <b>Whisper (STT):</b> Ключ Hugging Face API присутствует.")
+    else:
+        report_lines.append("❌ <b>Whisper (STT):</b> Не задан HF_API_KEY.")
+
+    # 4. Проверка Google Sheets
+    sheet_id = context.bot_data.get('google_sheet_id')
+    if not sheet_id:
+        report_lines.append("⚠️ <b>Google Sheets:</b> Не настроен (в базе данных не указан google_sheet_id).")
+    elif not GOOGLE_CREDENTIALS_JSON:
+        report_lines.append("❌ <b>Google Sheets:</b> Не настроен (отсутствует переменная окружения GOOGLE_CREDENTIALS_JSON).")
+    else:
+        try:
+            GoogleSheetsClient(sheet_id=sheet_id)
+            report_lines.append("✅ <b>Google Sheets:</b> OK")
+        except Exception as e:
+            report_lines.append(f"❌ <b>Google Sheets:</b> Ошибка инициализации: {e}")
+            
+    await update.message.reply_text("\n".join(report_lines), parse_mode=ParseMode.HTML)
 
 async def get_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
@@ -154,9 +202,11 @@ async def prompt_management_menu(update: Update, context: ContextTypes.DEFAULT_T
         "<b>Управление системным промптом:</b>\n\n"
         "Для просмотра: /get_prompt\n"
         "Для установки: /set_prompt [Новый текст]",
-        parse_mode=ParseMode.HTML)
+        parse_mode=ParseMode.HTML
+    )
 
 # --- Мастер управления Чек-листом ---
+
 async def checklist_management_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update, context): return ConversationHandler.END
     await update.message.reply_text(
