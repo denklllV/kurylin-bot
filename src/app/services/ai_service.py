@@ -3,8 +3,8 @@ import time
 import re
 from typing import List, Dict, Any
 
-# ИЗМЕНЕНИЕ: Удаляем SentenceTransformer, импортируем наш новый клиент
-from src.infra.clients.hf_embed_client import EmbeddingClient
+# УДАЛЕНО: Больше не импортируем клиенты для эмбеддингов
+# from src.infra.clients.hf_embed_client import EmbeddingClient
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
@@ -28,10 +28,10 @@ class AIService:
         self.or_client = or_client
         self.whisper_client = whisper_client
         self.repo = repo
-        logger.info("AIService initialized with DYNAMIC system prompts.")
+        logger.info("AIService initialized with DYNAMIC system prompts. RAG is DISABLED.")
         
-        # ИЗМЕНЕНИЕ: Вместо тяжелой локальной модели, инициализируем легкий API клиент
-        self.embedding_client = EmbeddingClient()
+        # УДАЛЕНО: Вся логика, связанная с моделями эмбеддингов, убрана
+        self.embedding_client = None
 
     def classify_text(self, text: str) -> str | None:
         clean_text = " ".join(text.strip().split())
@@ -86,19 +86,10 @@ class AIService:
         
         history_text_for_prompt = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
         
-        if rag_chunks:
-            rag_context = "\n---\n".join([chunk.get('content', '') for chunk in rag_chunks])
-            user_prompt_text = (
-                "Основываясь **в первую очередь** на приведенных ниже фактах из базы знаний, ответь на вопрос клиента. "
-                "Используй историю диалога для дополнительного контекста, если это необходимо.\n\n"
-                f"--- ФАКТЫ ИЗ БАЗЫ ЗНАНИЙ ---\n{rag_context}\n--- КОНЕЦ ФАКТОВ ---\n\n"
-                f"--- ИСТОРИЯ ДИАЛОГА ---\n{history_text_for_prompt if history else 'Нет'}\n--- КОНЕЦ ИСТОРИИ ---\n\n"
-                f"Вопрос клиента: «{question}»"
-            )
-        else:
-            if history:
-                messages.append({"role": "system", "content": f"Вот предыдущая часть нашего разговора:\n{history_text_for_prompt}"})
-            user_prompt_text = f"Вопрос клиента: «{question}»"
+        # ИЗМЕНЕНИЕ: Логика RAG полностью убрана, работаем как раньше
+        if history:
+            messages.append({"role": "system", "content": f"Вот предыдущая часть нашего разговора:\n{history_text_for_prompt}"})
+        user_prompt_text = f"Вопрос клиента: «{question}»"
 
         messages.append({"role": "user", "content": user_prompt_text})
         return messages
@@ -119,16 +110,8 @@ class AIService:
             logger.info(f"User {user_id} (client {client_id}) has quiz data. Adding it to context.")
             quiz_context = "\n".join([f"- {q}: {a}" for q, a in quiz_results.items()])
 
+        # ИЗМЕНЕНИЕ: Логика RAG полностью деактивирована
         rag_chunks = []
-        # ИЗМЕНЕНИЕ: Используем наш новый API клиент вместо локальной модели
-        if self.embedding_client:
-            question_embedding = self.embedding_client.get_embedding(user_question)
-            if question_embedding:
-                rag_chunks = self.repo.find_similar_chunks(embedding=question_embedding, client_id=client_id)
-                if rag_chunks:
-                    logger.info(f"RAG (API): Found {len(rag_chunks)} relevant chunk(s) for client {client_id}.")
-            else:
-                logger.error(f"RAG (API) Error: Failed to get embedding for question from user {user_id}.")
         
         messages_to_send = self._build_rag_prompt(system_prompt, user_question, history, rag_chunks, quiz_context)
         raw_response_text = self.or_client.get_chat_completion(messages_to_send)
