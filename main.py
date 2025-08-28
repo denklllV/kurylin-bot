@@ -1,5 +1,4 @@
-# START OF FILE: main.py
-
+# path: main.py
 import sys
 import os
 import asyncio
@@ -36,7 +35,8 @@ client_configs: Dict[str, Dict] = {}
 
 def register_handlers(app: Application):
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
-    contact_button_filter = filters.Regex('^🧑‍💼 Связаться с человеком$')
+    # ИСПРАВЛЕНИЕ: Опечатка в слове "Связаться"
+    contact_button_filter = filters.Regex('^🧑‍💼 Святься с человеком$')
     cancel_filter = filters.Regex('^Отмена$|^❌ Отмена$')
     checklist_button_filter = filters.Regex('^🎯 Чек-лист$')
     
@@ -76,7 +76,6 @@ def register_handlers(app: Application):
         fallbacks=[CommandHandler('cancel', admin_handlers.broadcast_cancel), MessageHandler(cancel_filter, admin_handlers.broadcast_cancel)],
     )
     
-    # НОВЫЙ ConversationHandler для управления чек-листом
     checklist_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(checklist_management_button_filter, admin_handlers.checklist_management_start)],
         states={
@@ -97,6 +96,7 @@ def register_handlers(app: Application):
     app.add_handler(CommandHandler("admin", admin_handlers.admin_panel))
     app.add_handler(CommandHandler("stats", admin_handlers.stats))
     app.add_handler(CommandHandler("export_leads", admin_handlers.export_leads))
+    app.add_handler(CommandHandler("get_file_id", admin_handlers.get_file_id))
     app.add_handler(CommandHandler("last_answer", admin_handlers.last_answer_debug))
     app.add_handler(CommandHandler("health_check", admin_handlers.health_check))
     app.add_handler(CommandHandler("get_prompt", admin_handlers.get_prompt))
@@ -137,6 +137,8 @@ async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> A
     app.bot_data['checklist_data'] = client_config.get('checklist_data')
     app.bot_data['quiz_data'] = client_config.get('quiz_data')
     app.bot_data['google_sheet_id'] = client_config.get('google_sheet_id')
+    app.bot_data['lead_magnet_enabled'] = client_config.get('lead_magnet_enabled')
+    app.bot_data['lead_magnet_file_id'] = client_config.get('lead_magnet_file_id')
     register_handlers(app)
     await app.initialize()
     await app.start()
@@ -190,5 +192,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# END OF FILE: main.py
+# path: main.py
