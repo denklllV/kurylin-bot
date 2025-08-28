@@ -1,8 +1,10 @@
-# START OF FILE: src/app/services/ai_service.py
-
+# path: src/app/services/ai_service.py
 import time
 import re
 from typing import List, Dict, Any
+
+# НОВОЕ: Импортируем SentenceTransformer для локальной векторизации
+from sentence_transformers import SentenceTransformer
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
@@ -26,9 +28,16 @@ class AIService:
         self.or_client = or_client
         self.whisper_client = whisper_client
         self.repo = repo
-        # ИЗМЕНЕНИЕ: Жестко закодированный дисклеймер полностью удален.
-        # Ответственность за его наличие теперь лежит на системном промпте.
         logger.info("AIService initialized with DYNAMIC system prompts.")
+        
+        # НОВОЕ: Инициализируем модель для RAG при старте сервиса.
+        # Это гарантирует, что модель загружается в память только один раз.
+        try:
+            self.embedding_model = SentenceTransformer('cointegrated/rubert-tiny2', device='cpu')
+            logger.info("SentenceTransformer model for RAG loaded successfully.")
+        except Exception as e:
+            self.embedding_model = None
+            logger.error(f"FATAL: Could not load SentenceTransformer model for RAG: {e}", exc_info=True)
 
     def classify_text(self, text: str) -> str | None:
         """Классифицирует текст запроса по заданным категориям."""
@@ -84,25 +93,30 @@ class AIService:
 
         messages = [{"role": "system", "content": current_system_prompt}]
         
-        if history:
-            history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
-            messages.append({"role": "system", "content": f"Вот предыдущая часть нашего разговора:\n{history_text}"})
-
+        history_text_for_prompt = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
+        
+        # ИЗМЕНЕНИЕ: Формируем промпт так, чтобы RAG-контекст был главным.
+        # История диалога теперь идет как дополнительный контекст.
         if rag_chunks:
             rag_context = "\n---\n".join([chunk.get('content', '') for chunk in rag_chunks])
             user_prompt_text = (
-                "Используя приведённые ниже факты из моей базы знаний, ответь на вопрос клиента.\n"
-                "Твой ответ должен основываться в первую очередь на этих фактах.\n\n"
-                f"--- ФАКТЫ ---\n{rag_context}\n--- КОНЕЦ ФАКТОВ ---\n\n"
+                "Основываясь **в первую очередь** на приведенных ниже фактах из базы знаний, ответь на вопрос клиента. "
+                "Используй историю диалога для дополнительного контекста, если это необходимо.\n\n"
+                f"--- ФАКТЫ ИЗ БАЗЫ ЗНАНИЙ ---\n{rag_context}\n--- КОНЕЦ ФАКТОВ ---\n\n"
+                f"--- ИСТОРИЯ ДИАЛОГА ---\n{history_text_for_prompt if history else 'Нет'}\n--- КОНЕЦ ИСТОРИИ ---\n\n"
                 f"Вопрос клиента: «{question}»"
             )
         else:
+            # Если фактов нет, работаем как раньше
+            if history:
+                messages.append({"role": "system", "content": f"Вот предыдущая часть нашего разговора:\n{history_text_for_prompt}"})
             user_prompt_text = f"Вопрос клиента: «{question}»"
+
         messages.append({"role": "user", "content": user_prompt_text})
         return messages
 
     def get_text_response(self, user_id: int, user_question: str, client_id: int) -> tuple[str, dict]:
-        """Генерирует ответ, используя динамический системный промпт и контекст квиза для клиента."""
+        """Генерирует ответ, используя RAG, динамический системный промпт и контекст квиза."""
         start_time = time.time()
         
         system_prompt = self.repo.get_client_system_prompt(client_id)
@@ -118,8 +132,23 @@ class AIService:
             logger.info(f"User {user_id} (client {client_id}) has quiz data. Adding it to context.")
             quiz_context = "\n".join([f"- {q}: {a}" for q, a in quiz_results.items()])
 
+        # --- АКТИВАЦИЯ RAG ---
         rag_chunks = []
-        
+        if self.embedding_model:
+            try:
+                # 1. Создаем эмбеддинг для вопроса пользователя
+                question_embedding = self.embedding_model.encode(user_question, convert_to_numpy=True).tolist()
+                
+                # 2. Ищем похожие чанки в Supabase, передавая client_id
+                rag_chunks = self.repo.find_similar_chunks(embedding=question_embedding, client_id=client_id)
+                if rag_chunks:
+                    logger.info(f"RAG: Found {len(rag_chunks)} relevant chunk(s) for client {client_id}.")
+            except Exception as e:
+                logger.error(f"RAG Error: Failed to find similar chunks for client {client_id}. Error: {e}", exc_info=True)
+        else:
+            logger.warning("RAG SKIPPED: Embedding model is not available.")
+        # ----------------------
+
         messages_to_send = self._build_rag_prompt(system_prompt, user_question, history, rag_chunks, quiz_context)
         raw_response_text = self.or_client.get_chat_completion(messages_to_send)
         response_text = strip_all_html_tags(raw_response_text)
@@ -134,14 +163,12 @@ class AIService:
             "processing_time": f"{end_time - start_time:.2f}s"
         }
         
-        logger.info(f"Response generated for client {client_id} (Quiz context: {quiz_completed}). Time: {debug_info['processing_time']}.")
+        logger.info(f"Response generated for client {client_id} (Quiz context: {quiz_completed}, RAG chunks: {len(rag_chunks)}). Time: {debug_info['processing_time']}.")
         
-        # ИЗМЕНЕНИЕ: Возвращаем "чистый" ответ модели, без добавления дисклеймера.
         final_response = response_text
         return final_response, debug_info
 
     def transcribe_voice(self, audio_data: bytes) -> str | None:
         """Транскрибирует аудиоданные в текст."""
         return self.whisper_client.transcribe(audio_data)
-
-# END OF FILE: src/app/services/ai_service.py
+# path: src/app/services/ai_service.py
