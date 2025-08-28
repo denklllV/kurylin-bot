@@ -1,5 +1,6 @@
 # path: src/api/telegram/admin_handlers.py
 import json
+import html
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import ContextTypes, ConversationHandler
@@ -90,12 +91,10 @@ async def last_answer_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
               f"<b>--- Использованная история диалога ---</b>\n{history_report}")
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
-# НОВАЯ КОМАНДА: Утилита для получения file_id
 async def get_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возвращает file_id для любого отправленного документа, фото, видео или аудио."""
     if not is_admin(update, context): return
     
-    # Сначала проверяем, было ли сообщение ответом на другое сообщение
     target_message = update.message.reply_to_message or update.message
     
     file_id = None
@@ -105,7 +104,7 @@ async def get_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = target_message.document.file_id
         file_type = "документа"
     elif target_message.photo:
-        file_id = target_message.photo[-1].file_id # Берем самое большое разрешение
+        file_id = target_message.photo[-1].file_id
         file_type = "фото"
     elif target_message.video:
         file_id = target_message.video.file_id
@@ -187,7 +186,9 @@ async def checklist_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if checklist_data:
         try:
             pretty_json = json.dumps(checklist_data, indent=2, ensure_ascii=False)
-            response_text = f"<b>Текущий чек-лист (Клиент ID: {client_id}):</b>\n\n<pre>{pretty_json}</pre>"
+            # ИСПРАВЛЕНИЕ: Экранируем HTML-символы внутри JSON перед отправкой
+            escaped_json = html.escape(pretty_json)
+            response_text = f"<b>Текущий чек-лист (Клиент ID: {client_id}):</b>\n\n<pre>{escaped_json}</pre>"
             await query.message.reply_text(text=response_text, parse_mode=ParseMode.HTML)
         except TypeError:
             await query.message.reply_text("Ошибка: не удалось отформатировать данные чек-листа.")
@@ -199,11 +200,9 @@ async def checklist_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     query = update.callback_query
     await query.answer()
     client_id, _ = get_client_context(context)
-    # Используем любой сервис, чтобы получить доступ к репозиторию
     lead_service: LeadService = context.application.bot_data['lead_service']
     success = lead_service.repo.update_client_checklist(client_id, None)
     if success:
-        # Важно: обновляем состояние в памяти, чтобы клавиатура пользователя сразу изменилась
         context.bot_data['checklist_data'] = None
         await query.edit_message_text("✅ Чек-лист успешно удален.")
     else:
@@ -258,14 +257,12 @@ async def checklist_receive_file(update: Update, context: ContextTypes.DEFAULT_T
         file_content_str = file_content_bytes.decode('utf-8')
         new_checklist_data = json.loads(file_content_str)
         
-        # Запускаем нашу новую функцию валидации
         _validate_checklist_structure(new_checklist_data)
         
         lead_service: LeadService = context.application.bot_data['lead_service']
         success = lead_service.repo.update_client_checklist(client_id, new_checklist_data)
         
         if success:
-            # Важно: обновляем состояние в памяти
             context.bot_data['checklist_data'] = new_checklist_data
             await update.message.reply_text("✅ Новый чек-лист успешно загружен и сохранен!", reply_markup=admin_keyboard)
             return ConversationHandler.END
@@ -274,7 +271,7 @@ async def checklist_receive_file(update: Update, context: ContextTypes.DEFAULT_T
             return ConversationHandler.END
             
     except json.JSONDecodeError:
-        await update.message.reply_text("❌ **Ошибка синтаксиса JSON:**\nНе удалось прочитать файл. Проверьте его на валидность (например, через онлайн-валидатор JSON) и попробуйте снова.")
+        await update.message.reply_text("❌ **Ошибка синтаксиса JSON:**\nНе удалось прочитать файл. Проверьте его на валидность и попробуйте снова.")
         return CHECKLIST_UPLOAD_FILE
     except ValueError as e:
         await update.message.reply_text(f"❌ **Ошибка структуры данных:**\n{e}\n\nПожалуйста, исправьте файл и отправьте его снова.")
@@ -293,6 +290,7 @@ async def checklist_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def checklist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Управление чек-листом отменено.", reply_markup=admin_keyboard)
     return ConversationHandler.END
+
 
 # --- Мастер Рассылок (ConversationHandler) ---
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
