@@ -19,7 +19,6 @@ def get_client_context(context: ContextTypes.DEFAULT_TYPE) -> (int, str):
     manager_contact = context.bot_data.get('manager_contact')
     return client_id, manager_contact
 
-# ИЗМЕНЕНИЕ: Создаем единую, переиспользуемую функцию для отправки запроса
 async def _send_contact_request(user: TelegramUser, context: ContextTypes.DEFAULT_TYPE):
     """Отправляет уведомление менеджеру о запросе на связь."""
     _, manager_contact = get_client_context(context)
@@ -63,6 +62,17 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
 
     response_text, debug_info = ai_service.get_text_response(user_id, user_question, client_id)
     context.application.bot_data.setdefault('last_debug_info', {})[client_id] = debug_info
+    
+    # --- "Пуленепробиваемый" Fallback ---
+    if response_text is None:
+        logger.warning(f"AI service failed for user {user_id} (client {client_id}). Triggering fallback.")
+        await update.message.reply_text(
+            "К сожалению, мой AI-модуль сейчас испытывает трудности с ответом. "
+            "Ваш вопрос очень важен для нас, и я уже передал его менеджеру."
+        )
+        await _send_contact_request(update.effective_user, context)
+        return
+
     ai_service.repo.save_message(user_id, Message(role='assistant', content=response_text), client_id)
     
     quiz_completed, _ = ai_service.repo.get_user_quiz_status(user_id, client_id)
@@ -72,7 +82,6 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     if checklist_data and not quiz_completed:
         action_buttons.append(InlineKeyboardButton("Пройти чек-лист", callback_data="start_quiz_from_prompt"))
     
-    # ИЗМЕНЕНИЕ: Переименовываем кнопку
     action_buttons.append(InlineKeyboardButton("Связь с человеком", callback_data="request_human_contact"))
     
     reply_markup = InlineKeyboardMarkup([action_buttons])
@@ -80,15 +89,12 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     disclaimer = "\n\n*Важно: эта информация носит справочный характер и не является юридической консультацией.*"
     final_text = response_text + disclaimer
     
-    parse_mode = ParseMode.MARKDOWN
-    
-    await update.message.reply_text(final_text, reply_markup=reply_markup, parse_mode=parse_mode)
+    await update.message.reply_text(final_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _process_user_message(update, context, update.message.text)
 
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (код без изменений) ...
     ai_service: AIService = context.application.bot_data['ai_service']
     await update.message.reply_text("Получил ваше голосовое, расшифровываю...")
     await update.message.reply_chat_action(ChatAction.TYPING)
@@ -107,19 +113,15 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("К сожалению, не удалось распознать речь. Попробуйте записать снова или, пожалуйста, напишите ваш вопрос текстом.")
         return
 
-# ИЗМЕНЕНИЕ: Обработчик для кнопки из основного меню
 async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _send_contact_request(update.effective_user, context)
     await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=get_main_keyboard(context))
 
-# ИЗМЕНЕНИЕ: Обработчик для инлайн-кнопки
 async def request_human_contact_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("Передаю ваш запрос менеджеру...")
-    # Теперь мы вызываем нашу общую функцию с правильными данными
     await _send_contact_request(query.from_user, context)
 
-# ... (остальной код файла без изменений) ...
 async def start_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     checklist_data = context.bot_data.get('checklist_data')
     if not checklist_data:
@@ -217,11 +219,7 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 caption="Здесь ваш бонусный материал!"
             )
         except TelegramError as e:
-            logger.error(
-                f"Failed to send lead magnet file {lead_magnet_file_id} "
-                f"for client {client_id} to user {user.id}. Error: {e}",
-                exc_info=True
-            )
+            logger.error(f"Failed to send lead magnet file {lead_magnet_file_id} for client {client_id} to user {user.id}. Error: {e}", exc_info=True)
             await update.message.reply_text("К сожалению, не удалось отправить бонусный файл. Мы решим эту проблему и вышлем его вам позже.")
     context.user_data.clear()
     return ConversationHandler.END

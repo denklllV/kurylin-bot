@@ -1,10 +1,7 @@
 # path: src/app/services/ai_service.py
 import time
 import re
-from typing import List, Dict, Any
-
-# УДАЛЕНО: Больше не импортируем клиенты для эмбеддингов
-# from src.infra.clients.hf_embed_client import EmbeddingClient
+from typing import List, Dict, Any, Tuple, Optional
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
@@ -12,10 +9,10 @@ from src.infra.clients.supabase_repo import SupabaseRepo
 from src.domain.models import Message
 from src.shared.logger import logger
 
-def strip_all_html_tags(text: str) -> str:
+def strip_all_html_tags(text: str) -> Optional[str]:
     """Полностью удаляет все HTML-теги из текста."""
     if not text:
-        return ""
+        return None
     return re.sub(r'<.*?>', '', text)
 
 class AIService:
@@ -29,11 +26,10 @@ class AIService:
         self.whisper_client = whisper_client
         self.repo = repo
         logger.info("AIService initialized with DYNAMIC system prompts. RAG is DISABLED.")
-        
-        # УДАЛЕНО: Вся логика, связанная с моделями эмбеддингов, убрана
         self.embedding_client = None
 
-    def classify_text(self, text: str) -> str | None:
+    def classify_text(self, text: str) -> Optional[str]:
+        """Классифицирует текст запроса по заданным категориям."""
         clean_text = " ".join(text.strip().split())
         if not clean_text:
             return "Нецелевой запрос"
@@ -60,6 +56,7 @@ class AIService:
 
         try:
             category = self.or_client.get_chat_completion(messages)
+            if category is None: return "Общая консультация" # Fallback
             clean_category = category.strip().replace('.', '')
             if clean_category in categories:
                 logger.info(f"Text classified as '{clean_category}'.")
@@ -71,7 +68,8 @@ class AIService:
             logger.error(f"Failed to classify text: {e}", exc_info=True)
             return "Общая консультация"
         
-    def _build_rag_prompt(self, system_prompt: str, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]], quiz_context: str = None) -> List[Dict[str, str]]:
+    def _build_rag_prompt(self, system_prompt: str, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]], quiz_context: Optional[str] = None) -> List[Dict[str, str]]:
+        """Собирает полный промпт, используя предоставленный system_prompt."""
         current_system_prompt = system_prompt
         
         if quiz_context:
@@ -86,7 +84,6 @@ class AIService:
         
         history_text_for_prompt = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
         
-        # ИЗМЕНЕНИЕ: Логика RAG полностью убрана, работаем как раньше
         if history:
             messages.append({"role": "system", "content": f"Вот предыдущая часть нашего разговора:\n{history_text_for_prompt}"})
         user_prompt_text = f"Вопрос клиента: «{question}»"
@@ -94,7 +91,8 @@ class AIService:
         messages.append({"role": "user", "content": user_prompt_text})
         return messages
 
-    def get_text_response(self, user_id: int, user_question: str, client_id: int) -> tuple[str, dict]:
+    def get_text_response(self, user_id: int, user_question: str, client_id: int) -> Tuple[Optional[str], dict]:
+        """Генерирует ответ, используя динамический системный промпт и контекст квиза."""
         start_time = time.time()
         
         system_prompt = self.repo.get_client_system_prompt(client_id)
@@ -110,29 +108,26 @@ class AIService:
             logger.info(f"User {user_id} (client {client_id}) has quiz data. Adding it to context.")
             quiz_context = "\n".join([f"- {q}: {a}" for q, a in quiz_results.items()])
 
-        # ИЗМЕНЕНИЕ: Логика RAG полностью деактивирована
         rag_chunks = []
         
         messages_to_send = self._build_rag_prompt(system_prompt, user_question, history, rag_chunks, quiz_context)
         raw_response_text = self.or_client.get_chat_completion(messages_to_send)
-        response_text = strip_all_html_tags(raw_response_text)
+        
         end_time = time.time()
+        
+        if raw_response_text is None:
+            debug_info = { "user_question": user_question, "llm_response": "ERROR: No response from OpenRouter", "final_prompt": messages_to_send, "rag_chunks": [], "conversation_history": [msg.to_dict() for msg in history], "processing_time": f"{end_time - start_time:.2f}s" }
+            return None, debug_info
 
-        debug_info = {
-            "user_question": user_question,
-            "llm_response": response_text,
-            "final_prompt": messages_to_send,
-            "rag_chunks": rag_chunks,
-            "conversation_history": [msg.to_dict() for msg in history],
-            "processing_time": f"{end_time - start_time:.2f}s"
-        }
+        response_text = strip_all_html_tags(raw_response_text)
+
+        debug_info = { "user_question": user_question, "llm_response": response_text, "final_prompt": messages_to_send, "rag_chunks": rag_chunks, "conversation_history": [msg.to_dict() for msg in history], "processing_time": f"{end_time - start_time:.2f}s" }
         
         logger.info(f"Response generated for client {client_id} (Quiz context: {quiz_completed}, RAG chunks: {len(rag_chunks)}). Time: {debug_info['processing_time']}.")
         
-        final_response = response_text
-        return final_response, debug_info
+        return response_text, debug_info
 
-    def transcribe_voice(self, audio_data: bytes) -> str | None:
+    def transcribe_voice(self, audio_data: bytes) -> Optional[str]:
         """Транскрибирует аудиоданные в текст."""
         return self.whisper_client.transcribe(audio_data)
 # path: src/app/services/ai_service.py
