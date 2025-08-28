@@ -22,13 +22,11 @@ from src.shared.config import (
 
 # --- Вспомогательные функции, общие для всех обработчиков ---
 def get_client_context(context: ContextTypes.DEFAULT_TYPE) -> (int, str):
-    """Извлекает client_id и manager_contact из контекста бота."""
     client_id = context.bot_data.get('client_id')
     manager_contact = context.bot_data.get('manager_contact')
     return client_id, manager_contact
 
 def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Проверяет, является ли пользователь администратором."""
     _, manager_contact = get_client_context(context)
     return str(update.effective_user.id) == manager_contact
 
@@ -46,12 +44,17 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
     client_id, _ = get_client_context(context)
     analytics_service: AnalyticsService = context.application.bot_data['analytics_service']
+    # Эта функция уже использует ChatAction.TYPING, что является правильной практикой
     await update.message.reply_chat_action(ChatAction.TYPING)
     report = analytics_service.generate_summary_report(client_id)
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
 async def export_leads(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
+    
+    # ИЗМЕНЕНИЕ: Добавляем индикатор работы перед выполнением долгой операции
+    await update.message.reply_chat_action(ChatAction.UPLOAD_DOCUMENT)
+    
     await update.message.reply_text("Начинаю экспорт. Это может занять до минуты...")
     client_id, _ = get_client_context(context)
     sheet_id = context.bot_data.get('google_sheet_id')
@@ -92,41 +95,27 @@ async def last_answer_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
 async def get_file_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возвращает file_id для любого отправленного документа, фото, видео или аудио."""
     if not is_admin(update, context): return
-    
     target_message = update.message.reply_to_message or update.message
-    
-    file_id = None
-    file_type = None
-
+    file_id, file_type = None, None
     if target_message.document:
-        file_id = target_message.document.file_id
-        file_type = "документа"
+        file_id, file_type = target_message.document.file_id, "документа"
     elif target_message.photo:
-        file_id = target_message.photo[-1].file_id
-        file_type = "фото"
+        file_id, file_type = target_message.photo[-1].file_id, "фото"
     elif target_message.video:
-        file_id = target_message.video.file_id
-        file_type = "видео"
+        file_id, file_type = target_message.video.file_id, "видео"
     elif target_message.audio:
-        file_id = target_message.audio.file_id
-        file_type = "аудио"
-    
+        file_id, file_type = target_message.audio.file_id, "аудио"
     if file_id and file_type:
-        response_text = (
-            f"<b>ID этого {file_type}:</b>\n\n"
-            f"<code>{file_id}</code>\n\n"
-            "Используйте этот ID в поле `lead_magnet_file_id` в вашей базе данных."
-        )
+        response_text = (f"<b>ID этого {file_type}:</b>\n\n<code>{file_id}</code>\n\n"
+                         "Используйте этот ID в поле `lead_magnet_file_id` в вашей базе данных.")
         await target_message.reply_text(response_text, parse_mode=ParseMode.HTML)
     else:
         await update.message.reply_text(
             "<b>Как использовать:</b>\n\n"
             "1. Отправьте в этот чат нужный файл (PDF, картинку и т.д.).\n"
             "2. Ответьте на сообщение с этим файлом командой /get_file_id.",
-            parse_mode=ParseMode.HTML
-        )
+            parse_mode=ParseMode.HTML)
 
 async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update, context): return
@@ -165,11 +154,9 @@ async def prompt_management_menu(update: Update, context: ContextTypes.DEFAULT_T
         "<b>Управление системным промптом:</b>\n\n"
         "Для просмотра: /get_prompt\n"
         "Для установки: /set_prompt [Новый текст]",
-        parse_mode=ParseMode.HTML
-    )
+        parse_mode=ParseMode.HTML)
 
 # --- Мастер управления Чек-листом ---
-
 async def checklist_management_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update, context): return ConversationHandler.END
     await update.message.reply_text(
@@ -186,7 +173,6 @@ async def checklist_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if checklist_data:
         try:
             pretty_json = json.dumps(checklist_data, indent=2, ensure_ascii=False)
-            # ИСПРАВЛЕНИЕ: Экранируем HTML-символы внутри JSON перед отправкой
             escaped_json = html.escape(pretty_json)
             response_text = f"<b>Текущий чек-лист (Клиент ID: {client_id}):</b>\n\n<pre>{escaped_json}</pre>"
             await query.message.reply_text(text=response_text, parse_mode=ParseMode.HTML)
@@ -221,47 +207,33 @@ async def checklist_upload_prompt(update: Update, context: ContextTypes.DEFAULT_
     return CHECKLIST_UPLOAD_FILE
 
 def _validate_checklist_structure(data: any) -> None:
-    """Проводит глубокую валидацию структуры чек-листа. Вызывает ValueError при ошибке."""
-    if not isinstance(data, list):
-        raise ValueError("Структура должна быть списком (JSON array `[...]`).")
-    if not data:
-        raise ValueError("Список вопросов не может быть пустым.")
+    if not isinstance(data, list): raise ValueError("Структура должна быть списком (JSON array `[...]`).")
+    if not data: raise ValueError("Список вопросов не может быть пустым.")
     for i, item in enumerate(data, 1):
-        if not isinstance(item, dict):
-            raise ValueError(f"Элемент #{i} не является объектом (JSON object `{{...}}`).")
-        if 'question' not in item or not isinstance(item['question'], str) or not item['question']:
-            raise ValueError(f"У элемента #{i} отсутствует или пуст ключ 'question'.")
-        if 'answers' not in item or not isinstance(item['answers'], list) or not item['answers']:
-            raise ValueError(f"У элемента #{i} отсутствует или пуст ключ 'answers'.")
+        if not isinstance(item, dict): raise ValueError(f"Элемент #{i} не является объектом (JSON object `{{...}}`).")
+        if 'question' not in item or not isinstance(item['question'], str) or not item['question']: raise ValueError(f"У элемента #{i} отсутствует или пуст ключ 'question'.")
+        if 'answers' not in item or not isinstance(item['answers'], list) or not item['answers']: raise ValueError(f"У элемента #{i} отсутствует или пуст ключ 'answers'.")
         for j, answer in enumerate(item['answers'], 1):
-            if not isinstance(answer, dict):
-                raise ValueError(f"В вопросе #{i}, ответ #{j} не является объектом.")
-            if 'text' not in answer or not isinstance(answer['text'], str) or not answer['text']:
-                raise ValueError(f"В вопросе #{i}, у ответа #{j} отсутствует или пуст ключ 'text'.")
+            if not isinstance(answer, dict): raise ValueError(f"В вопросе #{i}, ответ #{j} не является объектом.")
+            if 'text' not in answer or not isinstance(answer['text'], str) or not answer['text']: raise ValueError(f"В вопросе #{i}, у ответа #{j} отсутствует или пуст ключ 'text'.")
 
 async def checklist_receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     client_id, _ = get_client_context(context)
     if not update.message.document:
         await update.message.reply_text("Пожалуйста, отправьте именно файл, а не текст.")
         return CHECKLIST_UPLOAD_FILE
-    
     doc = update.message.document
     if not doc.file_name.lower().endswith('.json'):
         await update.message.reply_text("❌ **Ошибка:** Файл должен иметь расширение `.json`. Попробуйте снова.")
         return CHECKLIST_UPLOAD_FILE
-
     file = await doc.get_file()
     file_content_bytes = await file.download_as_bytearray()
-    
     try:
         file_content_str = file_content_bytes.decode('utf-8')
         new_checklist_data = json.loads(file_content_str)
-        
         _validate_checklist_structure(new_checklist_data)
-        
         lead_service: LeadService = context.application.bot_data['lead_service']
         success = lead_service.repo.update_client_checklist(client_id, new_checklist_data)
-        
         if success:
             context.bot_data['checklist_data'] = new_checklist_data
             await update.message.reply_text("✅ Новый чек-лист успешно загружен и сохранен!", reply_markup=admin_keyboard)
@@ -269,7 +241,6 @@ async def checklist_receive_file(update: Update, context: ContextTypes.DEFAULT_T
         else:
             await update.message.reply_text("❌ Произошла ошибка при сохранении чек-листа в базу данных.", reply_markup=admin_keyboard)
             return ConversationHandler.END
-            
     except json.JSONDecodeError:
         await update.message.reply_text("❌ **Ошибка синтаксиса JSON:**\nНе удалось прочитать файл. Проверьте его на валидность и попробуйте снова.")
         return CHECKLIST_UPLOAD_FILE
@@ -290,7 +261,6 @@ async def checklist_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def checklist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Управление чек-листом отменено.", reply_markup=admin_keyboard)
     return ConversationHandler.END
-
 
 # --- Мастер Рассылок (ConversationHandler) ---
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
