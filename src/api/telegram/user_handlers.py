@@ -1,7 +1,7 @@
 # path: src/api/telegram/user_handlers.py
 import io
 import re
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, User as TelegramUser
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
 from telegram.error import TelegramError
@@ -19,6 +19,15 @@ def get_client_context(context: ContextTypes.DEFAULT_TYPE) -> (int, str):
     manager_contact = context.bot_data.get('manager_contact')
     return client_id, manager_contact
 
+# ИЗМЕНЕНИЕ: Создаем единую, переиспользуемую функцию для отправки запроса
+async def _send_contact_request(user: TelegramUser, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет уведомление менеджеру о запросе на связь."""
+    _, manager_contact = get_client_context(context)
+    username = f"@{user.username}" if user.username else f"ID: {user.id}"
+    message_for_manager = f"<b>🧑‍💼 Запрос на связь от {username}</b>\n\nПожалуйста, свяжитесь с этим пользователем."
+    if manager_contact:
+        await context.bot.send_message(chat_id=manager_contact, text=message_for_manager, parse_mode=ParseMode.HTML)
+    
 # --- Основные обработчики для пользователей ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,12 +58,6 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Вы находитесь в режиме администратора. Для выхода введите /start.")
         return
 
-    user_category = ai_service.repo.get_user_category(user_id, client_id)
-    if user_category is None:
-        new_category = ai_service.classify_text(user_question)
-        if new_category:
-            ai_service.repo.update_user_category(user_id, new_category, client_id)
-
     ai_service.repo.save_message(user_id, Message(role='user', content=user_question), client_id)
     await update.message.reply_chat_action(ChatAction.TYPING)
 
@@ -69,7 +72,8 @@ async def _process_user_message(update: Update, context: ContextTypes.DEFAULT_TY
     if checklist_data and not quiz_completed:
         action_buttons.append(InlineKeyboardButton("Пройти чек-лист", callback_data="start_quiz_from_prompt"))
     
-    action_buttons.append(InlineKeyboardButton("Свяжитесь со мной", callback_data="request_human_contact"))
+    # ИЗМЕНЕНИЕ: Переименовываем кнопку
+    action_buttons.append(InlineKeyboardButton("Связь с человеком", callback_data="request_human_contact"))
     
     reply_markup = InlineKeyboardMarkup([action_buttons])
     
@@ -84,6 +88,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     await _process_user_message(update, context, update.message.text)
 
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (код без изменений) ...
     ai_service: AIService = context.application.bot_data['ai_service']
     await update.message.reply_text("Получил ваше голосовое, расшифровываю...")
     await update.message.reply_chat_action(ChatAction.TYPING)
@@ -92,10 +97,6 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     voice_bytes = await voice_file.download_as_bytearray()
     try:
         ogg_stream = io.BytesIO(voice_bytes)
-        # audio = AudioSegment.from_file(ogg_stream)
-        # mp3_stream = io.BytesIO()
-        # audio.export(mp3_stream, format="mp3")
-        # mp3_stream.seek(0)
         transcribed_text = ai_service.transcribe_voice(ogg_stream.read())
     except Exception as e:
         transcribed_text = None
@@ -106,22 +107,19 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("К сожалению, не удалось распознать речь. Попробуйте записать снова или, пожалуйста, напишите ваш вопрос текстом.")
         return
 
+# ИЗМЕНЕНИЕ: Обработчик для кнопки из основного меню
 async def contact_human(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    _, manager_contact = get_client_context(context)
-    user = update.effective_user
-    username = f"@{user.username}" if user.username else f"ID: {user.id}"
-    message_for_manager = f"<b>🧑‍💼 Запрос на связь от {username}</b>\n\nПожалуйста, свяжитесь с этим пользователем."
-    if manager_contact:
-        await context.bot.send_message(chat_id=manager_contact, text=message_for_manager, parse_mode=ParseMode.HTML)
+    await _send_contact_request(update.effective_user, context)
     await update.message.reply_text("Ваш запрос отправлен менеджеру.", reply_markup=get_main_keyboard(context))
 
+# ИЗМЕНЕНИЕ: Обработчик для инлайн-кнопки
 async def request_human_contact_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("Передаю ваш запрос менеджеру...")
-    effective_update = Update(update.update_id, message=query.message)
-    effective_update.effective_user = query.from_user
-    await contact_human(effective_update, context)
+    # Теперь мы вызываем нашу общую функцию с правильными данными
+    await _send_contact_request(query.from_user, context)
 
+# ... (остальной код файла без изменений) ...
 async def start_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     checklist_data = context.bot_data.get('checklist_data')
     if not checklist_data:
@@ -206,15 +204,11 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     lead_service.bot = context.bot
     await lead_service.save_lead(user, context.user_data, client_id, manager_contact)
     await update.message.reply_text("Спасибо за ваши ответы! Наши специалисты скоро свяжутся с вами.", reply_markup=get_main_keyboard(context))
-
-    # --- ЛОГИКА ОТПРАВКИ ЛИД-МАГНИТА ---
     lead_magnet_enabled = context.bot_data.get('lead_magnet_enabled')
     lead_magnet_file_id = context.bot_data.get('lead_magnet_file_id')
-
     if lead_magnet_enabled and lead_magnet_file_id:
         logger.info(f"Client {client_id} has lead magnet enabled. Sending file...")
         try:
-            # Отправляем сообщение-задержку для улучшения UX
             await update.message.reply_text("🎁 В качестве благодарности, отправляю вам полезный материал...")
             await update.message.reply_chat_action(ChatAction.UPLOAD_DOCUMENT)
             await context.bot.send_document(
@@ -229,8 +223,6 @@ async def get_region(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 exc_info=True
             )
             await update.message.reply_text("К сожалению, не удалось отправить бонусный файл. Мы решим эту проблему и вышлем его вам позже.")
-    # -------------------------------------
-
     context.user_data.clear()
     return ConversationHandler.END
 
