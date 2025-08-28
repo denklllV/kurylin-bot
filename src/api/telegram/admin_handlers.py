@@ -1,5 +1,4 @@
-# START OF FILE: src/api/telegram/admin_handlers.py
-
+# path: src/api/telegram/admin_handlers.py
 import json
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardRemove
@@ -147,44 +146,70 @@ async def checklist_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     client_id, _ = get_client_context(context)
     checklist_data = context.bot_data.get('checklist_data')
     if checklist_data:
-        pretty_json = json.dumps(checklist_data, indent=2, ensure_ascii=False)
-        await query.message.reply_text(f"<b>Текущий чек-лист (Клиент ID: {client_id}):</b>\n\n<pre>{pretty_json}</pre>", parse_mode=ParseMode.HTML)
+        try:
+            pretty_json = json.dumps(checklist_data, indent=2, ensure_ascii=False)
+            response_text = f"<b>Текущий чек-лист (Клиент ID: {client_id}):</b>\n\n<pre>{pretty_json}</pre>"
+            await query.message.reply_text(text=response_text, parse_mode=ParseMode.HTML)
+        except TypeError:
+            await query.message.reply_text("Ошибка: не удалось отформатировать данные чек-листа.")
     else:
-        await query.message.reply_text("Чек-лист для вашего клиента еще не загружен.")
-    # Остаемся в том же состоянии, чтобы можно было выбрать другое действие
+        await query.message.reply_text("ℹ️ Чек-лист для вашего клиента еще не загружен.")
     return CHECKLIST_ACTION
 
 async def checklist_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     client_id, _ = get_client_context(context)
+    # Используем любой сервис, чтобы получить доступ к репозиторию
     lead_service: LeadService = context.application.bot_data['lead_service']
     success = lead_service.repo.update_client_checklist(client_id, None)
     if success:
+        # Важно: обновляем состояние в памяти, чтобы клавиатура пользователя сразу изменилась
         context.bot_data['checklist_data'] = None
-        await query.message.edit_text("✅ Чек-лист успешно удален.")
+        await query.edit_message_text("✅ Чек-лист успешно удален.")
     else:
-        await query.message.edit_text("❌ Произошла ошибка при удалении чек-листа.")
+        await query.edit_message_text("❌ Произошла ошибка при удалении чек-листа в базе данных.")
     return ConversationHandler.END
 
 async def checklist_upload_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await query.message.edit_text(
-        "Пожалуйста, отправьте мне файл в формате `.json` с новой структурой чек-листа. Для отмены используйте команду /cancel.",
+    await query.edit_message_text(
+        "Пожалуйста, отправьте мне файл в формате `.json` с новой структурой чек-листа.\n\n"
+        "Для отмены используйте команду /cancel или нажмите кнопку 'Отмена' на клавиатуре.",
         reply_markup=None
     )
+    await query.message.reply_text("Ожидаю файл...", reply_markup=cancel_keyboard)
     return CHECKLIST_UPLOAD_FILE
+
+def _validate_checklist_structure(data: any) -> None:
+    """Проводит глубокую валидацию структуры чек-листа. Вызывает ValueError при ошибке."""
+    if not isinstance(data, list):
+        raise ValueError("Структура должна быть списком (JSON array `[...]`).")
+    if not data:
+        raise ValueError("Список вопросов не может быть пустым.")
+    for i, item in enumerate(data, 1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Элемент #{i} не является объектом (JSON object `{{...}}`).")
+        if 'question' not in item or not isinstance(item['question'], str) or not item['question']:
+            raise ValueError(f"У элемента #{i} отсутствует или пуст ключ 'question'.")
+        if 'answers' not in item or not isinstance(item['answers'], list) or not item['answers']:
+            raise ValueError(f"У элемента #{i} отсутствует или пуст ключ 'answers'.")
+        for j, answer in enumerate(item['answers'], 1):
+            if not isinstance(answer, dict):
+                raise ValueError(f"В вопросе #{i}, ответ #{j} не является объектом.")
+            if 'text' not in answer or not isinstance(answer['text'], str) or not answer['text']:
+                raise ValueError(f"В вопросе #{i}, у ответа #{j} отсутствует или пуст ключ 'text'.")
 
 async def checklist_receive_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     client_id, _ = get_client_context(context)
     if not update.message.document:
-        await update.message.reply_text("Пожалуйста, отправьте именно файл.")
+        await update.message.reply_text("Пожалуйста, отправьте именно файл, а не текст.")
         return CHECKLIST_UPLOAD_FILE
     
     doc = update.message.document
     if not doc.file_name.lower().endswith('.json'):
-        await update.message.reply_text("Ошибка: Файл должен иметь расширение `.json`. Попробуйте снова.")
+        await update.message.reply_text("❌ **Ошибка:** Файл должен иметь расширение `.json`. Попробуйте снова.")
         return CHECKLIST_UPLOAD_FILE
 
     file = await doc.get_file()
@@ -193,26 +218,31 @@ async def checklist_receive_file(update: Update, context: ContextTypes.DEFAULT_T
     try:
         file_content_str = file_content_bytes.decode('utf-8')
         new_checklist_data = json.loads(file_content_str)
-        if not isinstance(new_checklist_data, list) or not all(isinstance(item, dict) for item in new_checklist_data):
-            raise ValueError("JSON должен быть списком объектов")
+        
+        # Запускаем нашу новую функцию валидации
+        _validate_checklist_structure(new_checklist_data)
         
         lead_service: LeadService = context.application.bot_data['lead_service']
         success = lead_service.repo.update_client_checklist(client_id, new_checklist_data)
         
         if success:
+            # Важно: обновляем состояние в памяти
             context.bot_data['checklist_data'] = new_checklist_data
             await update.message.reply_text("✅ Новый чек-лист успешно загружен и сохранен!", reply_markup=admin_keyboard)
             return ConversationHandler.END
         else:
-            await update.message.reply_text("❌ Ошибка при сохранении в базу данных.", reply_markup=admin_keyboard)
+            await update.message.reply_text("❌ Произошла ошибка при сохранении чек-листа в базу данных.", reply_markup=admin_keyboard)
             return ConversationHandler.END
             
-    except (json.JSONDecodeError, ValueError) as e:
-        await update.message.reply_text(f"❌ Ошибка в файле: {e}. Проверьте структуру и попробуйте снова.")
+    except json.JSONDecodeError:
+        await update.message.reply_text("❌ **Ошибка синтаксиса JSON:**\nНе удалось прочитать файл. Проверьте его на валидность (например, через онлайн-валидатор JSON) и попробуйте снова.")
+        return CHECKLIST_UPLOAD_FILE
+    except ValueError as e:
+        await update.message.reply_text(f"❌ **Ошибка структуры данных:**\n{e}\n\nПожалуйста, исправьте файл и отправьте его снова.")
         return CHECKLIST_UPLOAD_FILE
     except Exception as e:
         logger.error(f"Error processing checklist file for client {client_id}: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Непредвиденная ошибка: {e}", reply_markup=admin_keyboard)
+        await update.message.reply_text(f"❌ Произошла непредвиденная ошибка: {e}", reply_markup=admin_keyboard)
         return ConversationHandler.END
 
 async def checklist_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -224,7 +254,6 @@ async def checklist_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def checklist_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Управление чек-листом отменено.", reply_markup=admin_keyboard)
     return ConversationHandler.END
-
 
 # --- Мастер Рассылок (ConversationHandler) ---
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -296,5 +325,4 @@ async def broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text("Создание рассылки отменено.", reply_markup=admin_keyboard)
     context.user_data.clear()
     return ConversationHandler.END
-
-# END OF FILE: src/api/telegram/admin_handlers.py
+# path: src/api/telegram/admin_handlers.py
