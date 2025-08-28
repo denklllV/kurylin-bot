@@ -1,5 +1,4 @@
-# START OF FILE: src/infra/clients/supabase_repo.py
-
+# path: src/infra/clients/supabase_repo.py
 from supabase import create_client, Client
 from typing import List, Dict, Any, Tuple, Optional
 import json
@@ -22,6 +21,24 @@ class SupabaseRepo:
         except Exception as e:
             logger.error(f"FATAL: Could not load clients from Supabase. Error: {e}", exc_info=True)
             return []
+
+    # --- НОВЫЕ МЕТОДЫ ДЛЯ RAG ---
+    def insert_into_knowledge_base(self, records: List[Dict[str, Any]]):
+        """Массово вставляет записи в таблицу knowledge_base."""
+        try:
+            self.client.table('knowledge_base').insert(records).execute()
+            logger.info(f"Successfully inserted {len(records)} records into knowledge_base.")
+        except Exception as e:
+            logger.error(f"Error inserting records into knowledge_base: {e}", exc_info=True)
+
+    def clear_knowledge_base_for_client(self, client_id: int):
+        """Удаляет все записи из knowledge_base для конкретного клиента."""
+        try:
+            self.client.table('knowledge_base').delete().eq('client_id', client_id).execute()
+            logger.info(f"Knowledge base cleared for client {client_id}.")
+        except Exception as e:
+            logger.error(f"Error clearing knowledge base for client {client_id}: {e}", exc_info=True)
+    # --------------------------------
 
     def get_leads_for_export(self, client_id: int, start_date: str, end_date: str) -> List[Dict[str, Any]]:
         """Вызывает RPC для получения лидов в диапазоне дат."""
@@ -77,7 +94,6 @@ class SupabaseRepo:
             logger.error(f"Error updating system prompt for client {client_id}: {e}", exc_info=True)
             return False
 
-    # НОВЫЙ МЕТОД: Обновляет или удаляет чек-лист для клиента
     def update_client_checklist(self, client_id: int, checklist_data: Optional[Dict]) -> bool:
         """Обновляет поле checklist_data для указанного клиента. Принимает dict или None."""
         try:
@@ -210,5 +226,4 @@ class SupabaseRepo:
         except Exception as e:
             logger.error(f"Error getting analytics by category for client {client_id}: {e}", exc_info=True)
             return []
-
-# END OF FILE: src/infra/clients/supabase_repo.py
+# path: src/infra/clients/supabase_repo.py
