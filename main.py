@@ -35,7 +35,6 @@ client_configs: Dict[str, Dict] = {}
 
 def register_handlers(app: Application):
     form_button_filter = filters.Regex('^📝 Заполнить анкету$')
-    # ИСПРАВЛЕНИЕ: Опечатка в слове "Связаться"
     contact_button_filter = filters.Regex('^🧑‍💼 Святься с человеком$')
     cancel_filter = filters.Regex('^Отмена$|^❌ Отмена$')
     checklist_button_filter = filters.Regex('^🎯 Чек-лист$')
@@ -142,12 +141,17 @@ async def setup_bot(token: str, client_config: Dict, common_services: Dict) -> A
     register_handlers(app)
     await app.initialize()
     await app.start()
-    if RUN_MODE == 'WEBHOOK':
-        webhook_url = f"{PUBLIC_APP_URL}/{token}"
-        if not (await app.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)):
-            logger.error(f"Failed to set webhook for bot ...{token[-4:]} to {webhook_url}")
-        else:
-            logger.info(f"Webhook set for bot ...{token[-4:]} to {webhook_url}")
+    
+    # ИЗМЕНЕНИЕ: Этот блок удален, так как он вызывает гонку состояний при запуске.
+    # Установка вебхуков теперь полностью управляется файлом gunicorn_conf.py,
+    # который выполняется один раз главным процессом перед запуском воркеров.
+    # if RUN_MODE == 'WEBHOOK':
+    #     webhook_url = f"{PUBLIC_APP_URL}/{token}"
+    #     if not (await app.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES)):
+    #         logger.error(f"Failed to set webhook for bot ...{token[-4:]} to {webhook_url}")
+    #     else:
+    #         logger.info(f"Webhook set for bot ...{token[-4:]} to {webhook_url}")
+
     return app
 
 @fastapi_app.post("/{bot_token}")
