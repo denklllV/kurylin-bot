@@ -3,8 +3,8 @@ import time
 import re
 from typing import List, Dict, Any
 
-# НОВОЕ: Импортируем SentenceTransformer для локальной векторизации
-from sentence_transformers import SentenceTransformer
+# ИЗМЕНЕНИЕ: Удаляем SentenceTransformer, импортируем наш новый клиент
+from src.infra.clients.hf_embed_client import EmbeddingClient
 
 from src.infra.clients.openrouter_client import OpenRouterClient
 from src.infra.clients.hf_whisper_client import WhisperClient
@@ -30,17 +30,10 @@ class AIService:
         self.repo = repo
         logger.info("AIService initialized with DYNAMIC system prompts.")
         
-        # НОВОЕ: Инициализируем модель для RAG при старте сервиса.
-        # Это гарантирует, что модель загружается в память только один раз.
-        try:
-            self.embedding_model = SentenceTransformer('cointegrated/rubert-tiny2', device='cpu')
-            logger.info("SentenceTransformer model for RAG loaded successfully.")
-        except Exception as e:
-            self.embedding_model = None
-            logger.error(f"FATAL: Could not load SentenceTransformer model for RAG: {e}", exc_info=True)
+        # ИЗМЕНЕНИЕ: Вместо тяжелой локальной модели, инициализируем легкий API клиент
+        self.embedding_client = EmbeddingClient()
 
     def classify_text(self, text: str) -> str | None:
-        """Классифицирует текст запроса по заданным категориям."""
         clean_text = " ".join(text.strip().split())
         if not clean_text:
             return "Нецелевой запрос"
@@ -79,8 +72,6 @@ class AIService:
             return "Общая консультация"
         
     def _build_rag_prompt(self, system_prompt: str, question: str, history: List[Message], rag_chunks: List[Dict[str, Any]], quiz_context: str = None) -> List[Dict[str, str]]:
-        """Собирает полный промпт, используя предоставленный system_prompt."""
-        
         current_system_prompt = system_prompt
         
         if quiz_context:
@@ -95,8 +86,6 @@ class AIService:
         
         history_text_for_prompt = "\n".join([f"{msg.role}: {msg.content}" for msg in history])
         
-        # ИЗМЕНЕНИЕ: Формируем промпт так, чтобы RAG-контекст был главным.
-        # История диалога теперь идет как дополнительный контекст.
         if rag_chunks:
             rag_context = "\n---\n".join([chunk.get('content', '') for chunk in rag_chunks])
             user_prompt_text = (
@@ -107,7 +96,6 @@ class AIService:
                 f"Вопрос клиента: «{question}»"
             )
         else:
-            # Если фактов нет, работаем как раньше
             if history:
                 messages.append({"role": "system", "content": f"Вот предыдущая часть нашего разговора:\n{history_text_for_prompt}"})
             user_prompt_text = f"Вопрос клиента: «{question}»"
@@ -116,7 +104,6 @@ class AIService:
         return messages
 
     def get_text_response(self, user_id: int, user_question: str, client_id: int) -> tuple[str, dict]:
-        """Генерирует ответ, используя RAG, динамический системный промпт и контекст квиза."""
         start_time = time.time()
         
         system_prompt = self.repo.get_client_system_prompt(client_id)
@@ -132,23 +119,17 @@ class AIService:
             logger.info(f"User {user_id} (client {client_id}) has quiz data. Adding it to context.")
             quiz_context = "\n".join([f"- {q}: {a}" for q, a in quiz_results.items()])
 
-        # --- АКТИВАЦИЯ RAG ---
         rag_chunks = []
-        if self.embedding_model:
-            try:
-                # 1. Создаем эмбеддинг для вопроса пользователя
-                question_embedding = self.embedding_model.encode(user_question, convert_to_numpy=True).tolist()
-                
-                # 2. Ищем похожие чанки в Supabase, передавая client_id
+        # ИЗМЕНЕНИЕ: Используем наш новый API клиент вместо локальной модели
+        if self.embedding_client:
+            question_embedding = self.embedding_client.get_embedding(user_question)
+            if question_embedding:
                 rag_chunks = self.repo.find_similar_chunks(embedding=question_embedding, client_id=client_id)
                 if rag_chunks:
-                    logger.info(f"RAG: Found {len(rag_chunks)} relevant chunk(s) for client {client_id}.")
-            except Exception as e:
-                logger.error(f"RAG Error: Failed to find similar chunks for client {client_id}. Error: {e}", exc_info=True)
-        else:
-            logger.warning("RAG SKIPPED: Embedding model is not available.")
-        # ----------------------
-
+                    logger.info(f"RAG (API): Found {len(rag_chunks)} relevant chunk(s) for client {client_id}.")
+            else:
+                logger.error(f"RAG (API) Error: Failed to get embedding for question from user {user_id}.")
+        
         messages_to_send = self._build_rag_prompt(system_prompt, user_question, history, rag_chunks, quiz_context)
         raw_response_text = self.or_client.get_chat_completion(messages_to_send)
         response_text = strip_all_html_tags(raw_response_text)
